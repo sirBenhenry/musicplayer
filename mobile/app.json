@@ -16,9 +16,7 @@
       "fallbackToCacheTimeout": 0,
       "url": "https://u.expo.dev/e8fd7b22-aea2-4116-b48a-fa42a2a4426b"
     },
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.0",
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -27,7 +25,6 @@
       "package": "ch.gonnet.musicapp",
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
-        "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.MODIFY_AUDIO_SETTINGS"
       ]
     },

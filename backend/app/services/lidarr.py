@@ -85,6 +85,52 @@ async def search_artists(query: str) -> list[dict]:
     return []
 
 
+async def search_tracks(query: str) -> list[dict]:
+    """Search Lidarr track catalog. Returns list of {title, artist, album, mbid, albumMbid}."""
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.get(
+                f"{settings.LIDARR_URL}/api/v1/artist/lookup",
+                params={"term": query},
+                headers=_headers(),
+            )
+            if r.status_code != 200:
+                return []
+            results = []
+            for artist in r.json()[:5]:
+                artist_name = artist.get("artistName", "")
+                for album in artist.get("albums", [])[:10]:
+                    album_title = album.get("title", "")
+                    for track in album.get("tracks", [])[:50]:
+                        results.append({
+                            "title": track.get("title", ""),
+                            "artist": artist_name,
+                            "album": album_title,
+                        })
+            return results[:50]
+    except Exception as e:
+        log.error("Lidarr search_tracks error: %s", e)
+    return []
+
+
+async def download_artist_discography(mbid: str, name: str) -> Optional[int]:
+    """Add artist to Lidarr (if not already) then trigger full discography search."""
+    existing_id = await get_artist_id_by_mbid(mbid)
+    if existing_id:
+        # Artist already in Lidarr — just trigger album search
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                await client.post(
+                    f"{settings.LIDARR_URL}/api/v1/command",
+                    json={"name": "ArtistSearch", "artistId": existing_id},
+                    headers=_headers(),
+                )
+        except Exception as e:
+            log.error("Lidarr ArtistSearch command error: %s", e)
+        return existing_id
+    return await add_artist_with_discography(name, mbid)
+
+
 async def add_artist_with_discography(name: str, mbid: str) -> Optional[int]:
     """Add artist to Lidarr and immediately trigger full discography download."""
     payload = {

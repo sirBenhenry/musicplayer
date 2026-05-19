@@ -98,3 +98,11 @@ export const searchNewArtists = (q: string) =>
   req<any[]>('GET', `/api/v1/artists/search?q=${encodeURIComponent(q)}`);
 export const importArtist = (body: { mbid: string; name: string }) =>
   req<any>('POST', '/api/v1/artists/import', body);
+export const downloadAllArtist = (artistId: string) =>
+  req<any>('POST', `/api/v1/artists/${artistId}/download-all`);
+
+// Track search + individual download
+export const searchTracks = (q: string) =>
+  req<any[]>('GET', `/api/v1/tracks/search?q=${encodeURIComponent(q)}`);
+export const downloadTrack = (body: { title: string; artist: string }) =>
+  req<any>('POST', '/api/v1/tracks/download', body);
