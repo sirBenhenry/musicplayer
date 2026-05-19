@@ -172,17 +172,18 @@ async def download_track(body: DownloadTrackRequest, background_tasks: Backgroun
 async def download_all_artist(
     artist_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
+    background_tasks: BackgroundTasks,
 ):
-    """Trigger full discography download for an artist already in the library."""
-    from ..services.lidarr import download_artist_discography
+    """Queue per-release discography download via MusicBrainz → Prowlarr → qBittorrent."""
+    from ..services.discography_importer import import_artist_discography
     a = await db.get(Artist, artist_id)
     if not a:
         raise HTTPException(404, "Artist not found")
     mbid = getattr(a, 'musicbrainz_id', None)
     if not mbid:
         raise HTTPException(422, "Artist has no MusicBrainz ID — add via Discover tab first")
-    lidarr_id = await download_artist_discography(mbid, a.name)
-    return {"status": "queued", "lidarr_id": lidarr_id, "message": f"Downloading discography for {a.name}"}
+    background_tasks.add_task(import_artist_discography, a.name, mbid)
+    return {"status": "queued", "message": f"Searching discography for {a.name} via Prowlarr"}
 
 
 @router.get("/artists/search", response_model=list[ArtistSearchResult])
