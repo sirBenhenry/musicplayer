@@ -32,7 +32,8 @@
         {
           "android": {
             "kotlinVersion": "1.9.25",
-            "newArchEnabled": false
+            "newArchEnabled": false,
+            "usesCleartextTraffic": true
           }
         }
       ],
