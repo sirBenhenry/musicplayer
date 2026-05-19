@@ -22,7 +22,7 @@ export default function LoginScreen() {
       const { access_token } = await login(username, password);
       setAuth(access_token, serverUrl);
     } catch (e: any) {
-      setError('Login failed. Check credentials and server URL.');
+      setError(String(e?.message ?? e));
     }
   };
 
@@ -36,7 +36,7 @@ export default function LoginScreen() {
           Music
         </Text>
         <Text style={[styles.subtitle, { color: theme.fgMuted }]}>
-          Connect to your server
+          Connect to your server · v1.0.0-b9
         </Text>
 
         <View style={styles.fields}>
