@@ -5,8 +5,15 @@ from functools import lru_cache
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Database
-    DATABASE_URL: str = "postgresql+asyncpg://musicapp:changeme@postgres:5432/musicapp"
+    # Database — override full URL or set DB_PASSWORD to fill the default
+    DB_PASSWORD: str = "changeme"
+    DATABASE_URL: str = ""
+
+    @property
+    def db_url(self) -> str:
+        if self.DATABASE_URL:
+            return self.DATABASE_URL
+        return f"postgresql+asyncpg://musicapp:{self.DB_PASSWORD}@musicapp-postgres:5432/musicapp"
 
     # JWT auth
     JWT_SECRET: str = "change-me-in-production"
@@ -48,7 +55,7 @@ class Settings(BaseSettings):
 
     # Filesystem paths (inside container)
     MUSIC_DIR: str = "/data/music/media/music"
-    DOWNLOADS_DIR: str = "/data/music/torrents/music"
+    DOWNLOADS_DIR: str = "/data/torrents/music"
 
     # Discovery behaviour
     SKIP_THRESHOLD: float = 0.90

@@ -26,7 +26,7 @@ export default function HomeScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { activeProfileId, profiles } = useStore();
+  const { activeProfileId, profiles, setProfileMenuOpen } = useStore();
   const [playlists, setPlaylists] = useState<any[]>([]);
   const [newReleaseArtist, setNewReleaseArtist] = useState<any>(null);
 
@@ -66,11 +66,16 @@ export default function HomeScreen() {
           {greeting().toUpperCase()}
         </Text>
         {profile && (
-          <TouchableOpacity style={styles.profileChip} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={styles.profileChip}
+            activeOpacity={0.7}
+            onPress={() => setProfileMenuOpen(true)}
+          >
             <View style={[styles.profileDot, { backgroundColor: `oklch(70% 0.08 ${profile.hue})` }]}>
               <Text style={styles.profileGlyph}>{profile.glyph}</Text>
             </View>
             <Text style={[styles.profileName, { color: theme.fgStrong }]}>{profile.name}</Text>
+            <Text style={{ color: theme.fgMuted, fontSize: 11, lineHeight: 14 }}>▾</Text>
           </TouchableOpacity>
         )}
       </View>

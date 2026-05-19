@@ -60,6 +60,10 @@ interface AppStore {
   toggleDark: () => void;
   toggleSage: () => void;
 
+  // UI overlays
+  profileMenuOpen: boolean;
+  setProfileMenuOpen: (v: boolean) => void;
+
   // Hydration
   hydrate: () => Promise<void>;
 }
@@ -113,6 +117,9 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ isSage: v });
     AsyncStorage.setItem('isSage', String(v));
   },
+
+  profileMenuOpen: false,
+  setProfileMenuOpen: (v) => set({ profileMenuOpen: v }),
 
   hydrate: async () => {
     const [auth, profileId, isDark, isSage] = await Promise.all([

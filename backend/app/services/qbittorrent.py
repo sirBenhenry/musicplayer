@@ -61,16 +61,30 @@ async def add_torrent(url: str, category: str = "music", save_path: str | None =
         data["savepath"] = save_path
     try:
         r = await _req("POST", "/torrents/add", data=data)
-        if r.text.lower() in ("ok.", "ok"):
+        # qBittorrent <5: returns "Ok." text on success
+        # qBittorrent >=5: returns JSON {"success_count":N,"pending_count":N,"failure_count":N}
+        added = False
+        if r.text.lower().strip() in ("ok.", "ok"):
+            added = True
+        else:
+            try:
+                j = r.json()
+                if isinstance(j, dict) and j.get("failure_count", 0) == 0 and \
+                        (j.get("success_count", 0) > 0 or j.get("pending_count", 0) > 0):
+                    added = True
+            except Exception:
+                pass
+
+        if added:
+            await __import__("asyncio").sleep(1)  # let qBittorrent register the torrent
             torrents = await get_torrents(category=category, filter="all")
-            # Find the torrent we just added by matching url
             for t in torrents:
                 if t.get("magnet_uri", "").startswith(url[:40]) or url in t.get("magnet_uri", ""):
                     return t["hash"]
-            # fallback — return latest
             if torrents:
                 return torrents[-1]["hash"]
-        log.error("qBittorrent add_torrent unexpected response: %s", r.text)
+        else:
+            log.error("qBittorrent add_torrent unexpected response: %s", r.text)
     except Exception as e:
         log.error("qBittorrent add_torrent failed: %s", e)
     return None

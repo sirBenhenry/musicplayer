@@ -1,7 +1,10 @@
+import logging
 import uuid
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+
+log = logging.getLogger(__name__)
 from pydantic import BaseModel
 from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -131,17 +134,37 @@ class DownloadAllRequest(BaseModel):
 
 @router.get("/tracks/search", response_model=list[TrackSearchResult])
 async def search_tracks_endpoint(q: str = Query(..., min_length=2)):
-    """Search for individual tracks via Lidarr catalog."""
-    from ..services.lidarr import search_tracks
-    results = await search_tracks(q)
-    return [TrackSearchResult(**r) for r in results]
+    """Search for individual tracks via MusicBrainz recordings."""
+    from ..services.musicbrainz import search_recordings
+    results = await search_recordings(q, limit=30)
+    return [TrackSearchResult(**r) for r in results[:30]]
 
 
 @router.post("/tracks/download", status_code=202)
-async def download_track(body: DownloadTrackRequest):
-    """Queue download of a single track via Prowlarr/qBittorrent."""
-    from ..discovery.downloader import queue_downloads
-    await queue_downloads([{"title": body.title, "artist": body.artist}])
+async def download_track(body: DownloadTrackRequest, background_tasks: BackgroundTasks):
+    """Queue download of a single track — searches for the containing album/single."""
+    from ..services import prowlarr, qbittorrent
+
+    async def _do():
+        # Search for the album/single that contains this track (more reliable than track-level)
+        queries = [
+            f"{body.artist} {body.title} FLAC",
+            f"{body.artist} {body.title}",
+        ]
+        for q in queries:
+            results = await prowlarr.search(q, categories=[3040])
+            if not results:
+                results = await prowlarr.search(q, categories=[3000])
+            best = prowlarr.pick_best_result(results)
+            if best:
+                url = best.get("downloadUrl") or best.get("magnetUrl") or ""
+                if url:
+                    await qbittorrent.add_torrent(url, category="music",
+                                                   save_path="/data/torrents/music")
+                    return
+        log.warning("No torrent found for %s — %s", body.artist, body.title)
+
+    background_tasks.add_task(_do)
     return {"status": "queued", "message": f"Searching for {body.artist} — {body.title}"}
 
 
@@ -186,12 +209,23 @@ async def search_new_artists(q: str = Query(..., min_length=2)):
 async def import_artist(
     body: ImportArtistRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    background_tasks: BackgroundTasks,
 ):
-    from ..services.lidarr import add_artist_with_discography
-    lidarr_id = await add_artist_with_discography(body.name, body.mbid)
-    if lidarr_id is None:
-        raise HTTPException(502, "Lidarr add failed")
-    return {"status": "queued", "lidarr_id": lidarr_id, "message": f"Downloading discography for {body.name}"}
+    import asyncio
+    from ..services.lidarr import add_artist_to_lidarr
+    from ..services.discography_importer import import_artist_discography
+
+    # Add to Lidarr for future release monitoring only (no initial search)
+    lidarr_id = await add_artist_to_lidarr(body.name, body.mbid)
+
+    # Queue per-album download in background: MusicBrainz → Prowlarr → qBittorrent
+    background_tasks.add_task(import_artist_discography, body.name, body.mbid)
+
+    return {
+        "status": "queued",
+        "lidarr_id": lidarr_id,
+        "message": f"Fetching discography for {body.name} — albums will appear as they download",
+    }
 
 
 @router.get("/artists", response_model=list[ArtistOut])
