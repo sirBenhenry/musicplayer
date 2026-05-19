@@ -5,7 +5,8 @@
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
-    "build:apk": "eas build --platform android --profile preview"
+    "build:apk": "eas build --platform android --profile preview",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@expo-google-fonts/geist": "^0.4.2",

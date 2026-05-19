@@ -14,7 +14,7 @@
       "enabled": true,
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0,
-      "url": "https://u.expo.dev/musicapp"
+      "url": "https://u.expo.dev/e8fd7b22-aea2-4116-b48a-fa42a2a4426b"
     },
     "runtimeVersion": {
       "policy": "appVersion"
@@ -25,7 +25,11 @@
         "backgroundColor": "#f4ede2"
       },
       "package": "ch.gonnet.musicapp",
-      "softwareKeyboardLayoutMode": "resize"
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": [
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -39,6 +43,16 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "e8fd7b22-aea2-4116-b48a-fa42a2a4426b"
+      }
+    },
+    "owner": "sirbenhenry",
+    "ios": {}
   }
 }
