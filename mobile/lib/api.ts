@@ -92,3 +92,9 @@ export const getAutoRadio = (songId: string, profileId?: string, scope = 'profil
 export const getQueue = () => req<any>('GET', '/api/v1/queue');
 export const appendQueue = (songId: string) =>
   req<void>('POST', '/api/v1/queue/append', { song_id: songId });
+
+// Artist discovery / import
+export const searchNewArtists = (q: string) =>
+  req<any[]>('GET', `/api/v1/artists/search?q=${encodeURIComponent(q)}`);
+export const importArtist = (body: { mbid: string; name: string }) =>
+  req<any>('POST', '/api/v1/artists/import', body);

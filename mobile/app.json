@@ -10,6 +10,15 @@
     "splash": {
       "backgroundColor": "#f4ede2"
     },
+    "updates": {
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/musicapp"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

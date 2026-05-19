@@ -100,6 +100,51 @@ async def stream_url(navidrome_id: str):
     return {"url": navidrome.stream_url(navidrome_id)}
 
 
+class ArtistSearchResult(BaseModel):
+    mbid: str
+    name: str
+    genres: list[str] = []
+    image_url: Optional[str] = None
+    overview: Optional[str] = None
+
+
+class ImportArtistRequest(BaseModel):
+    mbid: str
+    name: str
+
+
+@router.get("/artists/search", response_model=list[ArtistSearchResult])
+async def search_new_artists(q: str = Query(..., min_length=2)):
+    from ..services.lidarr import search_artists
+    results = await search_artists(q)
+    out = []
+    for r in results[:20]:
+        raw_genres = r.get("genres", [])
+        genres = [g if isinstance(g, str) else g.get("name", "") for g in raw_genres]
+        images = r.get("images", [])
+        image_url = next((i.get("url") for i in images if i.get("coverType") == "poster"), None)
+        out.append(ArtistSearchResult(
+            mbid=r.get("foreignArtistId", ""),
+            name=r.get("artistName", ""),
+            genres=genres,
+            image_url=image_url,
+            overview=r.get("overview", ""),
+        ))
+    return out
+
+
+@router.post("/artists/import", status_code=202)
+async def import_artist(
+    body: ImportArtistRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from ..services.lidarr import add_artist_with_discography
+    lidarr_id = await add_artist_with_discography(body.name, body.mbid)
+    if lidarr_id is None:
+        raise HTTPException(502, "Lidarr add failed")
+    return {"status": "queued", "lidarr_id": lidarr_id, "message": f"Downloading discography for {body.name}"}
+
+
 @router.get("/artists", response_model=list[ArtistOut])
 async def list_artists(
     db: Annotated[AsyncSession, Depends(get_db)],
