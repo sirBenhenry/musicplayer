@@ -1,0 +1,122 @@
+version: "3.8"
+
+# musicapp stack
+# Depends on aniapp stack for: qBittorrent (port 8080) and Prowlarr (port 9696)
+# Deploy order: musicapp first (creates musicapp_music_data volume), then update aniapp.
+
+services:
+
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: navidrome
+    environment:
+      - TZ=${TZ:-Europe/Zurich}
+      - ND_MUSICFOLDER=/data/music/media/music
+      - ND_DATAFOLDER=/data/navidrome
+      - ND_SCANSCHEDULE=1h
+      - ND_LOGLEVEL=info
+      - ND_SESSIONTIMEOUT=24h
+      - ND_ENABLETRANSCODINGCONFIG=true
+    volumes:
+      - music_data:/data/music
+      - navidrome_data:/data/navidrome
+    ports:
+      - "4533:4533"
+    restart: unless-stopped
+
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Europe/Zurich}
+    volumes:
+      - lidarr_config:/config
+      - music_data:/data/music
+    ports:
+      - "8686:8686"
+    restart: unless-stopped
+    # After first run, configure in Lidarr UI:
+    #   Settings → Media Management → Root folder: /data/music/media/music
+    #   Settings → Download Clients → qBittorrent at http://10.1.8.4:8080
+    #     Category: music   Save path: /data/music/torrents/music
+    #   Settings → Indexers → Add Prowlarr at http://10.1.8.4:9696
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: musicapp-postgres
+    environment:
+      - POSTGRES_DB=musicapp
+      - POSTGRES_USER=musicapp
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?DB_PASSWORD required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U musicapp -d musicapp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  music-backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: music-backend
+    environment:
+      - TZ=${TZ:-Europe/Zurich}
+      - DATABASE_URL=postgresql://musicapp:${DB_PASSWORD}@postgres:5432/musicapp
+      - NAVIDROME_URL=http://navidrome:4533
+      - NAVIDROME_USER=${NAVIDROME_USER:?required}
+      - NAVIDROME_PASS=${NAVIDROME_PASS:?required}
+      - LIDARR_URL=http://lidarr:8686
+      - LIDARR_KEY=${LIDARR_KEY:?required}
+      - QBITTORRENT_URL=http://10.1.8.4:8080
+      - QBITTORRENT_USER=${QBITTORRENT_USER:-admin}
+      - QBITTORRENT_PASS=${QBITTORRENT_PASS:?required}
+      - PROWLARR_URL=http://10.1.8.4:9696
+      - PROWLARR_KEY=${PROWLARR_KEY:?required}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?required}
+      - LLM_PROVIDER=${LLM_PROVIDER:-claude}
+      - LASTFM_API_KEY=${LASTFM_API_KEY:?required}
+      - LASTFM_API_SECRET=${LASTFM_API_SECRET:?required}
+      - LISTENBRAINZ_TOKEN=${LISTENBRAINZ_TOKEN:-}
+      - MUSIC_DIR=/data/music/media/music
+      - DOWNLOADS_DIR=/data/music/torrents/music
+      - SKIP_THRESHOLD=0.90
+      - DAILY_GENERATION_CRON=${DAILY_GENERATION_CRON:-0 2 * * *}
+    volumes:
+      - music_data:/data/music
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      navidrome:
+        condition: service_started
+      lidarr:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  # NFS volume — shared with aniapp qBittorrent (external reference there)
+  # Path layout inside:
+  #   /data/music/media/music/     ← Navidrome library, Lidarr root folder
+  #   /data/music/torrents/music/  ← qBittorrent download staging, Lidarr import source
+  music_data:
+    name: musicapp_music_data      # explicit name — aniapp references this as external
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=10.1.8.16,nfsvers=4,rw,soft,timeo=30"
+      device: ":/volume2/streaming/musicapp"
+
+  navidrome_data:
+    driver: local
+
+  lidarr_config:
+    driver: local
+
+  postgres_data:
+    driver: local
