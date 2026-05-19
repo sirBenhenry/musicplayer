@@ -25,6 +25,14 @@
       "expo-router",
       "expo-font",
       [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "1.9.25"
+          }
+        }
+      ],
+      [
         "expo-av",
         {
           "microphonePermission": false
