@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     OLLAMA_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3.1:70b"
 
+    # Soulseek via slskd
+    SLSKD_URL: str = "http://slskd:5030"
+    SLSKD_API_KEY: str = ""
+
+    # Qobuz via streamrip
+    QOBUZ_EMAIL: str = ""
+    QOBUZ_PASSWORD: str = ""
+    STREAMRIP_CONFIG_DIR: str = "/app/.streamrip"
+
     # Music discovery APIs
     LASTFM_API_KEY: str = ""
     LASTFM_API_SECRET: str = ""

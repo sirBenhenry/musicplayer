@@ -26,6 +26,10 @@ def start_scheduler(settings) -> None:
     from ..jobs.download_poller import poll_completed_downloads
     scheduler.add_job(poll_completed_downloads, "interval", minutes=2, id="dl_poller")
 
+    # Retry failed downloads every 15 min
+    from ..jobs.download_retry import retry_failed_downloads
+    scheduler.add_job(retry_failed_downloads, "interval", minutes=15, id="dl_retry")
+
     scheduler.start()
 
 

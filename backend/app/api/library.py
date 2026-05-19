@@ -2,7 +2,7 @@ import logging
 import uuid
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 log = logging.getLogger(__name__)
 from pydantic import BaseModel
@@ -141,49 +141,37 @@ async def search_tracks_endpoint(q: str = Query(..., min_length=2)):
 
 
 @router.post("/tracks/download", status_code=202)
-async def download_track(body: DownloadTrackRequest, background_tasks: BackgroundTasks):
-    """Queue download of a single track — searches for the containing album/single."""
-    from ..services import prowlarr, qbittorrent
-
-    async def _do():
-        # Search for the album/single that contains this track (more reliable than track-level)
-        queries = [
-            f"{body.artist} {body.title} FLAC",
-            f"{body.artist} {body.title}",
-        ]
-        for q in queries:
-            results = await prowlarr.search(q, categories=[3040])
-            if not results:
-                results = await prowlarr.search(q, categories=[3000])
-            best = prowlarr.pick_best_result(results)
-            if best:
-                url = best.get("downloadUrl") or best.get("magnetUrl") or ""
-                if url:
-                    await qbittorrent.add_torrent(url, category="music",
-                                                   save_path="/data/torrents/music")
-                    return
-        log.warning("No torrent found for %s — %s", body.artist, body.title)
-
-    background_tasks.add_task(_do)
-    return {"status": "queued", "message": f"Searching for {body.artist} — {body.title}"}
+async def download_track(body: DownloadTrackRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+    """Queue download of a single track via the multi-source pipeline."""
+    from ..services.download_pipeline import request_download
+    job = await request_download(db, item_type="track", artist=body.artist, title=body.title)
+    return {"status": "queued", "job_id": str(job.id), "message": f"Searching for {body.artist} — {body.title}"}
 
 
 @router.post("/artists/{artist_id}/download-all", status_code=202)
 async def download_all_artist(
     artist_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    background_tasks: BackgroundTasks,
 ):
-    """Queue per-release discography download via MusicBrainz → Prowlarr → qBittorrent."""
-    from ..services.discography_importer import import_artist_discography
+    """Queue per-release discography download via multi-source pipeline."""
+    from ..services import musicbrainz
+    from ..services.download_pipeline import request_download
     a = await db.get(Artist, artist_id)
     if not a:
         raise HTTPException(404, "Artist not found")
     mbid = getattr(a, 'musicbrainz_id', None)
     if not mbid:
         raise HTTPException(422, "Artist has no MusicBrainz ID — add via Discover tab first")
-    background_tasks.add_task(import_artist_discography, a.name, mbid)
-    return {"status": "queued", "message": f"Searching discography for {a.name} via Prowlarr"}
+    releases = await musicbrainz.get_release_groups(mbid)
+    if not releases:
+        raise HTTPException(422, f"No releases found on MusicBrainz for {a.name}")
+    queued = 0
+    for release in releases:
+        title = release.get("title", "").strip()
+        if title:
+            await request_download(db, item_type="album", artist=a.name, title=title)
+            queued += 1
+    return {"status": "queued", "count": queued, "message": f"Queued {queued} releases for {a.name}"}
 
 
 @router.get("/artists/search", response_model=list[ArtistSearchResult])
@@ -210,22 +198,28 @@ async def search_new_artists(q: str = Query(..., min_length=2)):
 async def import_artist(
     body: ImportArtistRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    background_tasks: BackgroundTasks,
 ):
-    import asyncio
     from ..services.lidarr import add_artist_to_lidarr
-    from ..services.discography_importer import import_artist_discography
+    from ..services import musicbrainz
+    from ..services.download_pipeline import request_download
 
-    # Add to Lidarr for future release monitoring only (no initial search)
+    # Add to Lidarr for future release monitoring
     lidarr_id = await add_artist_to_lidarr(body.name, body.mbid)
 
-    # Queue per-album download in background: MusicBrainz → Prowlarr → qBittorrent
-    background_tasks.add_task(import_artist_discography, body.name, body.mbid)
+    # Queue each release via the multi-source pipeline
+    releases = await musicbrainz.get_release_groups(body.mbid)
+    queued = 0
+    for release in (releases or []):
+        title = release.get("title", "").strip()
+        if title:
+            await request_download(db, item_type="album", artist=body.name, title=title)
+            queued += 1
 
     return {
         "status": "queued",
         "lidarr_id": lidarr_id,
-        "message": f"Fetching discography for {body.name} — albums will appear as they download",
+        "count": queued,
+        "message": f"Queued {queued} releases for {body.name}",
     }
 
 

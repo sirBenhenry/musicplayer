@@ -106,3 +106,13 @@ export const searchTracks = (q: string) =>
   req<any[]>('GET', `/api/v1/tracks/search?q=${encodeURIComponent(q)}`);
 export const downloadTrack = (body: { title: string; artist: string }) =>
   req<any>('POST', '/api/v1/tracks/download', body);
+
+// Download management
+export const getDownloads = (status?: string, page = 1, limit = 50) => {
+  const qs = new URLSearchParams({ page: String(page), limit: String(limit) });
+  if (status) qs.set('status', status);
+  return req<any[]>('GET', `/api/v1/downloads?${qs}`);
+};
+export const getFailedDownloads = () => req<any[]>('GET', '/api/v1/downloads/failed');
+export const retryDownload = (id: string) => req<any>('POST', `/api/v1/downloads/${id}/retry`);
+export const deleteDownload = (id: string) => req<void>('DELETE', `/api/v1/downloads/${id}`);

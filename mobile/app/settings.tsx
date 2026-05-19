@@ -41,6 +41,12 @@ export default function SettingsScreen() {
         </Row>
       </Section>
 
+      <Section label="DATA" theme={theme}>
+        <TouchableOpacity onPress={() => router.push('/downloads')} style={styles.logoutRow}>
+          <Text style={{ color: theme.fgStrong, fontSize: 15 }}>Downloads</Text>
+        </TouchableOpacity>
+      </Section>
+
       <Section label="ACCOUNT" theme={theme}>
         <TouchableOpacity
           onPress={() => { clearAuth(); router.replace('/login'); }}

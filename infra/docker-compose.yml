@@ -59,6 +59,24 @@ services:
       timeout: 5s
       retries: 5
 
+  slskd:
+    image: slskd/slskd:latest
+    container_name: slskd
+    environment:
+      - SLSKD_REMOTE_CONFIGURATION=true
+      - SLSKD_SLSK_USERNAME=${SOULSEEK_USERNAME:-}
+      - SLSKD_SLSK_PASSWORD=${SOULSEEK_PASSWORD:-}
+      - SLSKD_WEB_USERNAME=${SLSKD_USERNAME:-slskd}
+      - SLSKD_WEB_PASSWORD=${SLSKD_PASSWORD:-slskd}
+      - SLSKD_DOWNLOADS_DIR=/data/music/media/music
+      - SLSKD_SHARED_DIR=/data/music/media/music
+    ports:
+      - "5030:5030"
+    volumes:
+      - music_data:/data/music
+      - slskd_config:/app
+    restart: unless-stopped
+
   music-backend:
     image: music-backend:latest
     container_name: music-backend
@@ -78,6 +96,10 @@ services:
       - QBITTORRENT_PASS=${QBITTORRENT_PASS:?required}
       - PROWLARR_URL=http://10.1.8.4:9696
       - PROWLARR_KEY=${PROWLARR_KEY:?required}
+      - SLSKD_URL=http://slskd:5030
+      - SLSKD_API_KEY=${SLSKD_API_KEY:-}
+      - QOBUZ_EMAIL=${QOBUZ_EMAIL:-}
+      - QOBUZ_PASSWORD=${QOBUZ_PASSWORD:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?required}
       - LLM_PROVIDER=${LLM_PROVIDER:-claude}
       - LASTFM_API_KEY=${LASTFM_API_KEY:-}
@@ -122,4 +144,7 @@ volumes:
     driver: local
 
   postgres_data:
+    driver: local
+
+  slskd_config:
     driver: local
