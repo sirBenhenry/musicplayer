@@ -18,15 +18,15 @@ export default function SearchScreen() {
   const [loading, setLoading] = useState(false);
   const [actioning, setActioning] = useState<string | null>(null);
 
-  const doSearch = async (q: string) => {
+  const doSearch = async (q: string, activeTab: Tab = tab) => {
     setQuery(q);
     setResults([]);
     if (q.length < 2) return;
     setLoading(true);
     try {
-      if (tab === 'library') {
+      if (activeTab === 'library') {
         setResults(await getSongs({ search: q, limit: '40' }));
-      } else if (tab === 'artists') {
+      } else if (activeTab === 'artists') {
         setResults(await searchNewArtists(q));
       } else {
         setResults(await searchTracks(q));
@@ -38,7 +38,7 @@ export default function SearchScreen() {
   const onTabChange = (t: Tab) => {
     setTab(t);
     setResults([]);
-    if (query.length >= 2) setTimeout(() => doSearch(query), 0);
+    if (query.length >= 2) doSearch(query, t);
   };
 
   const handleImportArtist = async (artist: any) => {

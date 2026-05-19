@@ -8,9 +8,9 @@ import { RadialSwitcher } from '../../components/profile/RadialSwitcher';
 import { radius } from '../../lib/tokens';
 
 const TABS = [
+  { name: 'search', label: 'Search', icon: '⌕' },
   { name: 'index', label: 'Home', icon: '⌂' },
   { name: 'library', label: 'Library', icon: '♫' },
-  { name: 'search', label: 'Search', icon: '⌕' },
 ];
 
 export default function TabLayout() {
@@ -40,11 +40,8 @@ export default function TabLayout() {
               if (tab.name === 'index') {
                 return (
                   <GestureDetector gesture={longPress} key={tab.name}>
-                    <View ref={homeRef} collapsable={false}>
-                      <TouchableOpacity
-                        onPress={() => navigation.navigate(tab.name)}
-                        style={styles.homeShell}
-                      >
+                    <View ref={homeRef} collapsable={false} style={styles.homeShell}>
+                      <TouchableOpacity onPress={() => navigation.navigate(tab.name)}>
                         <View style={[styles.homeBtn, { backgroundColor: theme.accent }]}>
                           <Text style={{ fontSize: 22, color: theme.onAccent }}>{tab.icon}</Text>
                         </View>
@@ -71,9 +68,9 @@ export default function TabLayout() {
           </View>
         )}
       >
+        <Tabs.Screen name="search" />
         <Tabs.Screen name="index" />
         <Tabs.Screen name="library" />
-        <Tabs.Screen name="search" />
       </Tabs>
 
       {radialOpen && (
@@ -100,7 +97,7 @@ const styles = StyleSheet.create({
   navBtn: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: 8 },
   navBtnActive: {},
   navLabel: { fontSize: 10.5, fontWeight: '500', letterSpacing: 0.02 },
-  homeShell: { alignItems: 'center', justifyContent: 'center' },
+  homeShell: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   homeBtn: {
     width: 56,
     height: 56,

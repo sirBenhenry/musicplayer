@@ -108,6 +108,19 @@ export default function HomeScreen() {
 
       <Text style={[styles.sectionLabel, { color: theme.fgMuted, fontFamily: font.mono }]}>TODAY</Text>
 
+      {playlists.length === 0 && (
+        <View style={styles.emptyState}>
+          <Text style={[styles.emptyTitle, { color: theme.fgMuted }]}>
+            {!activeProfileId ? 'No profile set up yet' : 'No playlists generated yet'}
+          </Text>
+          <Text style={[styles.emptyBody, { color: theme.fgSoft }]}>
+            {!activeProfileId
+              ? 'Add music via Search, then profiles will appear here.'
+              : 'Add artists via Search or wait for the nightly generation.'}
+          </Text>
+        </View>
+      )}
+
       {/* Hero — Close Match */}
       {close && (
         <View style={{ paddingHorizontal: 20, marginBottom: 12 }}>
@@ -212,4 +225,7 @@ const styles = StyleSheet.create({
   pair: { flexDirection: 'row', gap: 12, paddingHorizontal: 20, marginBottom: 32 },
   pairSlot: { fontSize: 10.5, letterSpacing: 0.12, fontWeight: '500', marginTop: 8, marginBottom: 2 },
   pairTitle: { fontSize: 13.5, fontWeight: '600', lineHeight: 18 },
+  emptyState: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 32 },
+  emptyTitle: { fontSize: 15, fontWeight: '500', marginBottom: 6 },
+  emptyBody: { fontSize: 13.5, lineHeight: 20 },
 });
