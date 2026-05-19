@@ -18,6 +18,7 @@
         "backgroundColor": "#f4ede2"
       },
       "package": "ch.gonnet.musicapp",
+      "usesCleartextTraffic": true,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.MODIFY_AUDIO_SETTINGS"

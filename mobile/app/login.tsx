@@ -10,7 +10,7 @@ import { font, radius } from '../lib/tokens';
 export default function LoginScreen() {
   const theme = useTheme();
   const { setAuth } = useStore();
-  const [serverUrl, setServerUrl] = useState('http://10.1.8.4:8000');
+  const [serverUrl, setServerUrl] = useState('http://10.1.8.4:8001');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -41,7 +41,7 @@ export default function LoginScreen() {
 
         <View style={styles.fields}>
           {[
-            { label: 'Server URL', value: serverUrl, set: setServerUrl, placeholder: 'http://10.1.8.4:8000', secure: false },
+            { label: 'Server URL', value: serverUrl, set: setServerUrl, placeholder: 'http://10.1.8.4:8001', secure: false },
             { label: 'Username', value: username, set: setUsername, placeholder: 'admin', secure: false },
             { label: 'Password', value: password, set: setPassword, placeholder: '••••••••', secure: true },
           ].map(({ label, value, set, placeholder, secure }) => (
