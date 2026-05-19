@@ -8,6 +8,8 @@
     "scheme": "musicapp",
     "userInterfaceStyle": "automatic",
     "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
       "backgroundColor": "#f4ede2"
     },
     "android": {
