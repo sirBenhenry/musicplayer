@@ -10,13 +10,6 @@
     "splash": {
       "backgroundColor": "#f4ede2"
     },
-    "updates": {
-      "enabled": true,
-      "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 0,
-      "url": "https://u.expo.dev/e8fd7b22-aea2-4116-b48a-fa42a2a4426b"
-    },
-    "runtimeVersion": "1.0.0",
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
