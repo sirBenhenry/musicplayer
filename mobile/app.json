@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Music",
+    "slug": "musicapp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "musicapp",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "backgroundColor": "#f4ede2"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#f4ede2"
+      },
+      "package": "ch.gonnet.musicapp",
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-av",
+        {
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

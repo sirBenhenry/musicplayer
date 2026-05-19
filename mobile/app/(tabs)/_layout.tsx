@@ -1,0 +1,116 @@
+import React, { useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Tabs } from 'expo-router';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+import { useTheme } from '../../hooks/useTheme';
+import { useStore } from '../../lib/store';
+import { RadialSwitcher } from '../../components/profile/RadialSwitcher';
+import { radius } from '../../lib/tokens';
+
+const TABS = [
+  { name: 'index', label: 'Home', icon: '⌂' },
+  { name: 'library', label: 'Library', icon: '♫' },
+  { name: 'search', label: 'Search', icon: '⌕' },
+];
+
+export default function TabLayout() {
+  const theme = useTheme();
+  const { setActiveProfile } = useStore();
+  const [radialOpen, setRadialOpen] = useState(false);
+  const [radialAnchor, setRadialAnchor] = useState({ x: 0, y: 0 });
+  const homeRef = useRef<View>(null);
+
+  const longPress = Gesture.LongPress()
+    .minDuration(280)
+    .onStart(() => {
+      homeRef.current?.measure((fx, fy, w, h, px, py) => {
+        setRadialAnchor({ x: px + w / 2, y: py });
+        setRadialOpen(true);
+      });
+    });
+
+  return (
+    <View style={{ flex: 1 }}>
+      <Tabs
+        screenOptions={{ headerShown: false }}
+        tabBar={({ state, navigation }) => (
+          <View style={[styles.nav, { backgroundColor: theme.bgElev, borderTopColor: theme.borderSoft }]}>
+            {TABS.map((tab, i) => {
+              const active = state.index === i;
+              if (tab.name === 'index') {
+                return (
+                  <GestureDetector gesture={longPress} key={tab.name}>
+                    <View ref={homeRef} collapsable={false}>
+                      <TouchableOpacity
+                        onPress={() => navigation.navigate(tab.name)}
+                        style={styles.homeShell}
+                      >
+                        <View style={[styles.homeBtn, { backgroundColor: theme.accent }]}>
+                          <Text style={{ fontSize: 22, color: theme.onAccent }}>{tab.icon}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  </GestureDetector>
+                );
+              }
+              return (
+                <TouchableOpacity
+                  key={tab.name}
+                  onPress={() => navigation.navigate(tab.name)}
+                  style={[styles.navBtn, active && styles.navBtnActive]}
+                >
+                  <Text style={{ fontSize: 20, color: active ? theme.accent : theme.fgMuted }}>
+                    {tab.icon}
+                  </Text>
+                  <Text style={[styles.navLabel, { color: active ? theme.accent : theme.fgMuted }]}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+      >
+        <Tabs.Screen name="index" />
+        <Tabs.Screen name="library" />
+        <Tabs.Screen name="search" />
+      </Tabs>
+
+      {radialOpen && (
+        <RadialSwitcher
+          anchorX={radialAnchor.x}
+          anchorY={radialAnchor.y}
+          onSelect={(p) => { setActiveProfile(p.id); setRadialOpen(false); }}
+          onDismiss={() => setRadialOpen(false)}
+        />
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  nav: {
+    height: 72,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 8,
+  },
+  navBtn: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: 8 },
+  navBtnActive: {},
+  navLabel: { fontSize: 10.5, fontWeight: '500', letterSpacing: 0.02 },
+  homeShell: { alignItems: 'center', justifyContent: 'center' },
+  homeBtn: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -8,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+});
