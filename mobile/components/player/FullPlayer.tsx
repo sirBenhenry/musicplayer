@@ -46,7 +46,7 @@ export function FullPlayer({ onClose }: Props) {
   const [stayInProfile, setStayInProfile] = useState(true);
 
   const top = useSharedValue(SH - MINI_BOTTOM - MINI_H - MINI_MARGIN);
-  const borderR = useSharedValue(radius.card);
+  const borderR = useSharedValue<number>(radius.card);
   const opacity = useSharedValue(0);
 
   React.useEffect(() => {

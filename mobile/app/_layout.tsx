@@ -9,6 +9,8 @@ import {
   Geist_500Medium,
   Geist_600SemiBold,
 } from '@expo-google-fonts/geist';
+import { GeistMono_400Regular } from '@expo-google-fonts/geist-mono';
+import { InstrumentSerif_400Regular } from '@expo-google-fonts/instrument-serif';
 import { useStore } from '../lib/store';
 import { setupAudio } from '../lib/audio';
 import { MiniPlayer } from '../components/chrome/MiniPlayer';
@@ -40,6 +42,8 @@ export default function RootLayout() {
     Geist: Geist_400Regular,
     GeistMedium: Geist_500Medium,
     GeistSemiBold: Geist_600SemiBold,
+    GeistMono: GeistMono_400Regular,
+    InstrumentSerif: InstrumentSerif_400Regular,
   });
 
   useEffect(() => {

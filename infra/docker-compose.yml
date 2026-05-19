@@ -60,18 +60,19 @@ services:
       retries: 5
 
   music-backend:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
+    image: music-backend:latest
     container_name: music-backend
     environment:
       - TZ=${TZ:-Europe/Zurich}
-      - DATABASE_URL=postgresql://musicapp:${DB_PASSWORD}@postgres:5432/musicapp
+      - DATABASE_URL=postgresql+asyncpg://musicapp:${DB_PASSWORD}@postgres:5432/musicapp
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET required}
+      - APP_USERNAME=${APP_USERNAME:-admin}
+      - APP_PASSWORD=${APP_PASSWORD:?APP_PASSWORD required}
       - NAVIDROME_URL=http://navidrome:4533
       - NAVIDROME_USER=${NAVIDROME_USER:?required}
       - NAVIDROME_PASS=${NAVIDROME_PASS:?required}
       - LIDARR_URL=http://lidarr:8686
-      - LIDARR_KEY=${LIDARR_KEY:?required}
+      - LIDARR_KEY=${LIDARR_KEY:-}
       - QBITTORRENT_URL=http://10.1.8.4:8080
       - QBITTORRENT_USER=${QBITTORRENT_USER:-admin}
       - QBITTORRENT_PASS=${QBITTORRENT_PASS:?required}
@@ -79,17 +80,19 @@ services:
       - PROWLARR_KEY=${PROWLARR_KEY:?required}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?required}
       - LLM_PROVIDER=${LLM_PROVIDER:-claude}
-      - LASTFM_API_KEY=${LASTFM_API_KEY:?required}
-      - LASTFM_API_SECRET=${LASTFM_API_SECRET:?required}
+      - LASTFM_API_KEY=${LASTFM_API_KEY:-}
+      - LASTFM_API_SECRET=${LASTFM_API_SECRET:-}
       - LISTENBRAINZ_TOKEN=${LISTENBRAINZ_TOKEN:-}
       - MUSIC_DIR=/data/music/media/music
       - DOWNLOADS_DIR=/data/music/torrents/music
       - SKIP_THRESHOLD=0.90
       - DAILY_GENERATION_CRON=${DAILY_GENERATION_CRON:-0 2 * * *}
+      - EOD_CRON=${EOD_CRON:-45 23 * * *}
+      - LIBRARY_SYNC_CRON=${LIBRARY_SYNC_CRON:-0 * * * *}
     volumes:
       - music_data:/data/music
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -110,7 +113,7 @@ volumes:
     driver_opts:
       type: nfs
       o: "addr=10.1.8.16,nfsvers=4,rw,soft,timeo=30"
-      device: ":/volume2/streaming/musicapp"
+      device: ":/volume2/aniapp"
 
   navidrome_data:
     driver: local

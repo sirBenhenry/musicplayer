@@ -58,7 +58,7 @@ export const sageDarkOverride = {
   onAccent: '#0f1208',
 } as const;
 
-export type Theme = typeof light;
+export type Theme = { [K in keyof typeof light]: string };
 
 export const radius = {
   cover: 10,
