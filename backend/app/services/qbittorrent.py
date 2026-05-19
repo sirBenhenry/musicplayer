@@ -8,41 +8,47 @@ from ..core.config import get_settings
 settings = get_settings()
 log = logging.getLogger(__name__)
 
-_cookie: str | None = None
+_cookie_name: str | None = None
+_cookie_value: str | None = None
 
 
-async def _get_cookie() -> str:
-    global _cookie
-    if _cookie:
-        return _cookie
+async def _get_cookie() -> tuple[str, str]:
+    global _cookie_name, _cookie_value
+    if _cookie_name and _cookie_value:
+        return _cookie_name, _cookie_value
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(
             f"{settings.QBITTORRENT_URL}/api/v2/auth/login",
             data={"username": settings.QBITTORRENT_USER, "password": settings.QBITTORRENT_PASS},
         )
-        if r.text == "Ok.":
-            _cookie = r.cookies.get("SID", "")
-            return _cookie
-        raise RuntimeError(f"qBittorrent login failed: {r.text}")
+        # qBittorrent 4.6+ returns 204 empty; older versions return 200 "Ok."
+        if r.status_code in (200, 204) and r.text in ("Ok.", ""):
+            # Newer qBittorrent uses QBT_SID_<port>; older uses SID
+            for name, value in r.cookies.items():
+                if value:
+                    _cookie_name = name
+                    _cookie_value = value
+                    return name, value
+        raise RuntimeError(f"qBittorrent login failed: {r.status_code} {r.text!r}")
 
 
 async def _req(method: str, path: str, **kwargs) -> httpx.Response:
-    global _cookie
-    sid = await _get_cookie()
+    global _cookie_name, _cookie_value
+    name, value = await _get_cookie()
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.request(
             method,
             f"{settings.QBITTORRENT_URL}/api/v2{path}",
-            cookies={"SID": sid},
+            cookies={name: value},
             **kwargs,
         )
         if r.status_code == 403:
-            _cookie = None
-            sid = await _get_cookie()
+            _cookie_name = _cookie_value = None
+            name, value = await _get_cookie()
             r = await client.request(
                 method,
                 f"{settings.QBITTORRENT_URL}/api/v2{path}",
-                cookies={"SID": sid},
+                cookies={name: value},
                 **kwargs,
             )
         return r
