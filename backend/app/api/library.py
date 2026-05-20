@@ -86,6 +86,7 @@ class SongOut(BaseModel):
 async def list_songs(
     db: Annotated[AsyncSession, Depends(get_db)],
     profile: Optional[uuid.UUID] = None,
+    artist: Optional[uuid.UUID] = None,
     search: Optional[str] = None,
     unassigned: bool = False,
     page: int = Query(1, ge=1),
@@ -94,6 +95,8 @@ async def list_songs(
     q = select(Song)
     if profile:
         q = q.where(Song.profile_id == profile)
+    if artist:
+        q = q.where(Song.artist_id == artist)
     if unassigned:
         q = q.where(Song.needs_profile_assignment == True)  # noqa: E712
     if search:

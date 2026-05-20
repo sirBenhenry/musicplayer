@@ -24,10 +24,10 @@ export default function LibraryScreen() {
   const [albums, setAlbums] = useState<any[]>([]);
 
   useEffect(() => {
-    getSongs(activeProfileId ? { profile: activeProfileId } : {}).then(setSongs).catch(() => {});
+    getSongs({}).then(setSongs).catch(() => {});
     getArtists().then(setArtists).catch(() => {});
     getAlbums().then(setAlbums).catch(() => {});
-  }, [activeProfileId]);
+  }, []);
 
   const TABS: Tab[] = ['Songs', 'Artists', 'Albums'];
 

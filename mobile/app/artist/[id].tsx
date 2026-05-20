@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
 import { CoverArt } from '../../components/shared/CoverArt';
 import { SongRow } from '../../components/shared/SongRow';
-import { getArtist, getSongs, followArtist, unfollowArtist, getStreamUrl, downloadAllArtist } from '../../lib/api';
+import { getArtist, getSongs, followArtist, unfollowArtist, getStreamUrl, getCoverUrl, downloadAllArtist } from '../../lib/api';
 import { playSong } from '../../lib/audio';
 
 export default function ArtistScreen() {
@@ -20,7 +20,7 @@ export default function ArtistScreen() {
   useEffect(() => {
     if (!id) return;
     getArtist(id).then((a) => { setArtist(a); setFollowed(a.followed); }).catch(() => {});
-    getSongs({ artist_id: id }).then(setSongs).catch(() => {});
+    getSongs({ artist: id }).then(setSongs).catch(() => {});
   }, [id]);
 
   const handleDownloadAll = async () => {
@@ -57,7 +57,7 @@ export default function ArtistScreen() {
         keyExtractor={(s) => s.id}
         ListHeaderComponent={() => (
           <View style={styles.artistHeader}>
-            <CoverArt uri={null} size={80} title={artist?.name} borderRadius={40} />
+            <CoverArt uri={artist ? getCoverUrl(artist.navidrome_id) : null} size={80} title={artist?.name} borderRadius={40} />
             <Text style={[styles.name, { color: theme.fgStrong }]}>{artist?.name}</Text>
             <View style={styles.actionRow}>
               <TouchableOpacity
