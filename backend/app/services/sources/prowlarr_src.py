@@ -28,7 +28,7 @@ async def download(job) -> bool:
             url = best.get("downloadUrl") or best.get("magnetUrl") or ""
             if not url:
                 continue
-            h = await qbittorrent.add_torrent(url, category="music", save_path="/data/torrents/music")
+            h = await qbittorrent.add_torrent(url, category="music", save_path="/data/music/torrents/music")
             if h:
                 job.qb_hash = h
                 log.info("prowlarr: queued %s - %s → %s", artist, title, h[:8])

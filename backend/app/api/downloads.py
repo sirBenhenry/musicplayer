@@ -67,6 +67,14 @@ async def list_failed_downloads(db: Annotated[AsyncSession, Depends(get_db)]):
     return result.scalars().all()
 
 
+@router.get("/downloads/{job_id}", response_model=DownloadJobOut)
+async def get_download(job_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_db)]):
+    job = await db.get(DownloadJob, job_id)
+    if not job:
+        raise HTTPException(404, "Download job not found")
+    return job
+
+
 @router.post("/downloads/track", status_code=202, response_model=DownloadJobOut)
 async def download_track(
     body: RequestTrackBody,

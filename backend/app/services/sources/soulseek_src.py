@@ -39,31 +39,31 @@ async def download(job) -> bool:
         raise RuntimeError("slskd not configured (SLSKD_URL/SLSKD_API_KEY missing)")
 
     query = f"{job.artist} {job.title}"
-    async with httpx.AsyncClient(timeout=10, headers=_headers()) as client:
-        # Start search
+    async with httpx.AsyncClient(timeout=15, headers=_headers()) as client:
         r = await client.post(f"{_base()}/api/v1/searches", json={"searchText": query})
         r.raise_for_status()
         search_id = r.json()["id"]
 
-    # Poll for results
+    # Poll for results — must use ?includeResponses=true to get files
     results = []
     for _ in range(_SEARCH_TIMEOUT // _POLL_INTERVAL):
         await asyncio.sleep(_POLL_INTERVAL)
-        async with httpx.AsyncClient(timeout=10, headers=_headers()) as client:
-            r = await client.get(f"{_base()}/api/v1/searches/{search_id}")
+        async with httpx.AsyncClient(timeout=15, headers=_headers()) as client:
+            r = await client.get(f"{_base()}/api/v1/searches/{search_id}?includeResponses=true")
             data = r.json()
-        if data.get("state") == "Completed":
+        state = data.get("state", "")
+        if "Completed" in state or "Cancelled" in state:
             results = data.get("responses", [])
             break
 
-    # Flatten files, pick best
+    # Flatten files from all users, pick best
     candidates = []
     for resp in results:
         username = resp.get("username", "")
         for f in resp.get("files", []):
             fname = f.get("filename", "")
             size = f.get("size", 0)
-            if size < 2_000_000:  # skip tiny files
+            if size < 2_000_000:
                 continue
             candidates.append((username, fname, size))
 
@@ -71,30 +71,32 @@ async def download(job) -> bool:
         raise RuntimeError(f"no Soulseek results for '{query}'")
 
     candidates.sort(key=lambda c: _quality_rank(c[1], c[2]), reverse=True)
-    username, filename, _ = candidates[0]
+    username, filename, size = candidates[0]
+    log.info("soulseek: best match user=%s file=%s size=%d", username, filename.split("\\")[-1], size)
 
-    # Request download
-    async with httpx.AsyncClient(timeout=10, headers=_headers()) as client:
+    # Request download — API expects an array
+    async with httpx.AsyncClient(timeout=15, headers=_headers()) as client:
         r = await client.post(
             f"{_base()}/api/v1/transfers/downloads/{username}",
-            json={"filename": filename},
+            json=[{"filename": filename, "size": size}],
         )
         r.raise_for_status()
 
-    # Poll until complete
+    # Poll transfer status — response is nested: {username, directories:[{files:[{state,...}]}]}
     for _ in range(_DL_TIMEOUT // _POLL_INTERVAL):
         await asyncio.sleep(_POLL_INTERVAL)
-        async with httpx.AsyncClient(timeout=10, headers=_headers()) as client:
+        async with httpx.AsyncClient(timeout=15, headers=_headers()) as client:
             r = await client.get(f"{_base()}/api/v1/transfers/downloads/{username}")
-            transfers = r.json() if r.status_code == 200 else []
+            data = r.json() if r.status_code == 200 else {}
 
-        for t in (transfers if isinstance(transfers, list) else []):
-            if t.get("filename") == filename:
-                state = t.get("state", "")
-                if state == "Completed":
-                    log.info("soulseek: downloaded %s - %s", job.artist, job.title)
-                    return True
-                if "Failed" in state or "Cancelled" in state:
-                    raise RuntimeError(f"Soulseek transfer failed: {state}")
+        for directory in data.get("directories", []):
+            for t in directory.get("files", []):
+                if t.get("filename") == filename:
+                    state = t.get("state", "")
+                    if "Completed" in state:
+                        log.info("soulseek: downloaded %s - %s", job.artist, job.title)
+                        return True
+                    if "Failed" in state or "Cancelled" in state:
+                        raise RuntimeError(f"Soulseek transfer failed: {state}")
 
     raise RuntimeError(f"Soulseek download timed out for '{job.artist} - {job.title}'")

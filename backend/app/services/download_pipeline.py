@@ -1,6 +1,7 @@
 """Central download pipeline: creates jobs and tries sources in priority order."""
 import asyncio
 import logging
+import types
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -87,34 +88,41 @@ async def retry_job(job_id: uuid.UUID) -> None:
 
 async def _run_pipeline(job_id: uuid.UUID) -> None:
     """Try each source in order; update job status throughout."""
+    # Load fields into plain namespace — ORM object must NOT outlive its session
     async with _db() as db:
         job = await db.get(DownloadJob, job_id)
         if not job or job.status not in ("queued",):
             return
         job.status = "downloading"
+        ctx = types.SimpleNamespace(
+            id=job.id, artist=job.artist, title=job.title, item_type=job.item_type,
+        )
 
     sources = _get_sources()
     sources_tried = []
 
     for source in sources:
         try:
-            async with _db() as db:
-                job = await db.get(DownloadJob, job_id)
-                ok = await source.download(job)
-                if ok:
-                    job.status = "completed"
-                    job.source_used = source.NAME
-                    job.sources_tried = sources_tried
-                    job.completed_at = datetime.now(timezone.utc)
-                    log.info("pipeline: %s - %s completed via %s", job.artist, job.title, source.NAME)
-                    # Trigger rescan + analysis after non-torrent sources
-                    if source.NAME not in ("prowlarr",):
-                        asyncio.create_task(_post_download_hook())
-                    return
+            ok = await source.download(ctx)
+            if ok:
+                async with _db() as db:
+                    job = await db.get(DownloadJob, job_id)
+                    if job:
+                        job.status = "completed"
+                        job.source_used = source.NAME
+                        job.sources_tried = sources_tried
+                        job.completed_at = datetime.now(timezone.utc)
+                        # prowlarr_src sets ctx.qb_hash — persist it
+                        if getattr(ctx, "qb_hash", None):
+                            job.qb_hash = ctx.qb_hash
+                log.info("pipeline: %s - %s completed via %s", ctx.artist, ctx.title, source.NAME)
+                if source.NAME not in ("prowlarr",):
+                    asyncio.create_task(_post_download_hook())
+                return
         except Exception as e:
             err = str(e)
             sources_tried.append({"source": source.NAME, "error": err})
-            log.info("pipeline: source %s failed for %s - %s: %s", source.NAME, job.artist if 'job' in dir() else "?", "", err)
+            log.info("pipeline: source %s failed for %s - %s: %s", source.NAME, ctx.artist, ctx.title, err)
 
     # All sources exhausted for this attempt
     async with _db() as db:
@@ -128,12 +136,12 @@ async def _run_pipeline(job_id: uuid.UUID) -> None:
         if job.retry_count > _MAX_RETRIES:
             job.status = "exhausted"
             job.next_retry_at = None
-            log.warning("pipeline: %s - %s exhausted after %d retries", job.artist, job.title, job.retry_count)
+            log.warning("pipeline: %s - %s exhausted after %d retries", ctx.artist, ctx.title, job.retry_count)
         else:
             delay = _BACKOFF_MINUTES[job.retry_count - 1]
             job.status = "failed"
             job.next_retry_at = datetime.now(timezone.utc) + timedelta(minutes=delay)
-            log.info("pipeline: %s - %s failed, retry in %d min", job.artist, job.title, delay)
+            log.info("pipeline: %s - %s failed, retry in %d min", ctx.artist, ctx.title, delay)
 
 
 async def _post_download_hook() -> None:
