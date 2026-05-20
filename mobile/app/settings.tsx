@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView, TextInput, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../hooks/useTheme';
@@ -10,7 +10,15 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { isDark, isSage, toggleDark, toggleSage, clearAuth, serverUrl } = useStore();
+  const { isDark, isSage, toggleDark, toggleSage, clearAuth, serverUrl, setServerUrl } = useStore();
+  const [editingUrl, setEditingUrl] = useState(serverUrl);
+
+  const saveUrl = () => {
+    const trimmed = editingUrl.trim().replace(/\/$/, '');
+    if (!trimmed) return;
+    setServerUrl(trimmed);
+    Alert.alert('Saved', 'Server URL updated. Restart the app if needed.');
+  };
 
   return (
     <ScrollView
@@ -34,10 +42,26 @@ export default function SettingsScreen() {
       </Section>
 
       <Section label="SERVER" theme={theme}>
-        <Row label="URL" theme={theme} last>
-          <Text style={[styles.value, { color: theme.fgMuted }]} numberOfLines={1}>
-            {serverUrl || '—'}
-          </Text>
+        <View style={[styles.row, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}>
+          <Text style={[styles.rowLabel, { color: theme.fgStrong }]}>URL</Text>
+          <TextInput
+            value={editingUrl}
+            onChangeText={setEditingUrl}
+            onBlur={saveUrl}
+            onSubmitEditing={saveUrl}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            returnKeyType="done"
+            style={[styles.urlInput, { color: theme.fgStrong, borderColor: theme.borderSoft }]}
+            placeholder="http://10.x.x.x:8001"
+            placeholderTextColor={theme.fgSoft}
+          />
+        </View>
+        <Row label="" theme={theme} last>
+          <TouchableOpacity onPress={saveUrl} style={[styles.saveBtn, { backgroundColor: theme.accentBg }]}>
+            <Text style={{ color: theme.accent, fontSize: 13, fontWeight: '600' }}>Save</Text>
+          </TouchableOpacity>
         </Row>
       </Section>
 
@@ -90,5 +114,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 13 },
   rowLabel: { fontSize: 15 },
   value: { fontSize: 14, maxWidth: 180 },
+  urlInput: { flex: 1, fontSize: 13, textAlign: 'right', paddingVertical: 4, paddingHorizontal: 6, borderWidth: 1, borderRadius: 6, marginLeft: 8 },
+  saveBtn: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: radius.pill },
   logoutRow: { paddingHorizontal: 16, paddingVertical: 14 },
 });

@@ -2,7 +2,9 @@ import logging
 import uuid
 from typing import Annotated, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 log = logging.getLogger(__name__)
 from pydantic import BaseModel
@@ -15,6 +17,35 @@ from ..models.library import Artist, Album, Song
 from ..services import navidrome
 
 router = APIRouter(tags=["library"], dependencies=[Depends(require_auth)])
+
+# Unauthenticated router for media proxy endpoints (stream + cover art)
+stream_router = APIRouter(tags=["stream"])
+
+
+@stream_router.get("/stream/{navidrome_id}")
+async def stream_audio(navidrome_id: str):
+    url = navidrome.stream_url(navidrome_id)
+
+    async def _gen():
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream("GET", url) as r:
+                async for chunk in r.aiter_bytes(chunk_size=65536):
+                    yield chunk
+
+    return StreamingResponse(_gen(), media_type="audio/mpeg")
+
+
+@stream_router.get("/cover/{navidrome_id}")
+async def cover_art(navidrome_id: str):
+    url = navidrome.cover_art_url(navidrome_id)
+
+    async def _gen():
+        async with httpx.AsyncClient(timeout=30) as client:
+            async with client.stream("GET", url) as r:
+                async for chunk in r.aiter_bytes(chunk_size=32768):
+                    yield chunk
+
+    return StreamingResponse(_gen(), media_type="image/jpeg")
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -97,10 +128,6 @@ async def get_song(song_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_d
         raise HTTPException(404, "Song not found")
     return SongOut.model_validate(s)
 
-
-@router.get("/stream/{navidrome_id}")
-async def stream_url(navidrome_id: str):
-    return {"url": navidrome.stream_url(navidrome_id)}
 
 
 class ArtistSearchResult(BaseModel):

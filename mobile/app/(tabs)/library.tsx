@@ -6,7 +6,7 @@ import { useTheme } from '../../hooks/useTheme';
 import { useStore } from '../../lib/store';
 import { SongRow } from '../../components/shared/SongRow';
 import { CoverArt } from '../../components/shared/CoverArt';
-import { getSongs, getArtists, getAlbums, getStreamUrl } from '../../lib/api';
+import { getSongs, getArtists, getAlbums, getStreamUrl, getCoverUrl } from '../../lib/api';
 import { playSong } from '../../lib/audio';
 import { font, radius } from '../../lib/tokens';
 
@@ -56,7 +56,7 @@ export default function LibraryScreen() {
           keyExtractor={(s) => s.id}
           renderItem={({ item }) => (
             <SongRow
-              song={item}
+              song={{ ...item, artist: item.artist_name ?? '', cover_url: getCoverUrl(item.navidrome_id) }}
               onPress={() => {
                 const url = getStreamUrl(item.navidrome_id);
                 playSong({ ...item, artist: item.artist_name ?? '', duration_sec: item.duration_sec ?? 0 }, url, null);

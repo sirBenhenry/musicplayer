@@ -3,18 +3,33 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import select
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 from app.core.config import get_settings
+from app.core.database import AsyncSessionLocal
 from app.core.scheduler import start_scheduler, stop_scheduler
 from app.api import auth, library, profiles, playback, deletion, discovery, history, queue, webhooks, admin, downloads
+from app.api.library import stream_router
+from app.models.profile import Profile
 
 settings = get_settings()
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Auto-create default catchall profile if none exist
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Profile).limit(1))
+            if not result.scalar_one_or_none():
+                db.add(Profile(name="My Music", glyph="♫", hue=30, is_catchall=True, daily_auto_generate=True))
+                await db.commit()
+                log.info("Created default profile 'My Music'")
+    except Exception as e:
+        log.warning("Could not auto-create default profile: %s", e)
     start_scheduler(settings)
     yield
     stop_scheduler()
@@ -31,6 +46,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(stream_router, prefix="/api/v1")
 app.include_router(library.router, prefix="/api/v1")
 app.include_router(profiles.router, prefix="/api/v1")
 app.include_router(playback.router, prefix="/api/v1")

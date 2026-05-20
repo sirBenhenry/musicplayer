@@ -40,6 +40,8 @@ export const getSongs = (params?: Record<string, string>) => {
 export const getSong = (id: string) => req<any>('GET', `/api/v1/songs/${id}`);
 export const getStreamUrl = (navidromeId: string): string =>
   `${base()}/api/v1/stream/${navidromeId}`;
+export const getCoverUrl = (navidromeId: string): string =>
+  `${base()}/api/v1/cover/${navidromeId}`;
 export const getArtists = (params?: Record<string, string>) => {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
   return req<any[]>('GET', `/api/v1/artists${qs}`);

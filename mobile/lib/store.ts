@@ -28,6 +28,7 @@ interface AppStore {
   token: string | null;
   serverUrl: string;
   setAuth: (token: string, serverUrl: string) => void;
+  setServerUrl: (url: string) => void;
   clearAuth: () => void;
 
   // Profile
@@ -74,6 +75,11 @@ export const useStore = create<AppStore>((set, get) => ({
   setAuth: (token, serverUrl) => {
     set({ token, serverUrl });
     AsyncStorage.setItem('auth', JSON.stringify({ token, serverUrl }));
+  },
+  setServerUrl: (url) => {
+    const token = get().token;
+    set({ serverUrl: url });
+    AsyncStorage.setItem('auth', JSON.stringify({ token, serverUrl: url }));
   },
   clearAuth: () => {
     set({ token: null, serverUrl: '' });

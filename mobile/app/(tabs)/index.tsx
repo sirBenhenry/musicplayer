@@ -65,7 +65,7 @@ export default function HomeScreen() {
         <Text style={[styles.greetLabel, { color: theme.fgMuted, fontFamily: font.mono }]}>
           {greeting().toUpperCase()}
         </Text>
-        {profile && (
+        {profile ? (
           <TouchableOpacity
             style={styles.profileChip}
             activeOpacity={0.7}
@@ -76,6 +76,10 @@ export default function HomeScreen() {
             </View>
             <Text style={[styles.profileName, { color: theme.fgStrong }]}>{profile.name}</Text>
             <Text style={{ color: theme.fgMuted, fontSize: 11, lineHeight: 14 }}>▾</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity onPress={() => router.push('/settings')} style={{ padding: 6 }}>
+            <Text style={{ color: theme.fgMuted, fontSize: 20 }}>⚙</Text>
           </TouchableOpacity>
         )}
       </View>

@@ -79,6 +79,14 @@ def stream_url(navidrome_id: str) -> str:
     return f"{settings.NAVIDROME_URL}/rest/stream?{qs}"
 
 
+def cover_art_url(navidrome_id: str, size: int = 300) -> str:
+    """Return Navidrome getCoverArt URL for the given ID."""
+    import urllib.parse
+    params = {**_auth_params(), "id": navidrome_id, "size": size}
+    qs = urllib.parse.urlencode(params)
+    return f"{settings.NAVIDROME_URL}/rest/getCoverArt?{qs}"
+
+
 async def trigger_scan() -> None:
     """Ask Navidrome to rescan the music folder."""
     await _get("startScan")
