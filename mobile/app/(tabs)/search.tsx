@@ -3,7 +3,8 @@ import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity, Activity
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
 import { SongRow } from '../../components/shared/SongRow';
-import { getSongs, getStreamUrl, searchNewArtists, importArtist, searchTracks, downloadTrack } from '../../lib/api';
+import { CoverArt } from '../../components/shared/CoverArt';
+import { getSongs, getStreamUrl, searchNewArtists, importArtist, searchTracksItunes, downloadTrack } from '../../lib/api';
 import { playSong } from '../../lib/audio';
 import { radius } from '../../lib/tokens';
 
@@ -30,7 +31,7 @@ export default function SearchScreen() {
       } else if (activeTab === 'artists') {
         res = await searchNewArtists(q);
       } else {
-        res = await searchTracks(q);
+        res = await searchTracksItunes(q);
       }
       if (q === currentQuery.current) {
         setResults(res);
@@ -48,7 +49,9 @@ export default function SearchScreen() {
     setQuery(q);
     currentQuery.current = q;
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    if (q.length < 2) { setResults([]); setLoading(false); return; }
+    // Always clear stale results immediately so old results never bleed through
+    setResults([]);
+    if (q.length < 2) { setLoading(false); return; }
     if (activeTab === 'library') {
       runSearch(q, activeTab);
     } else {
@@ -205,11 +208,14 @@ export default function SearchScreen() {
       {tab === 'songs' && (
         <FlatList
           data={results}
-          keyExtractor={(t) => `${t.artist}/${t.title}`}
+          keyExtractor={(t) => t.itunes_id ? String(t.itunes_id) : `${t.artist}/${t.title}`}
           renderItem={({ item }) => {
             const key = `${item.artist}/${item.title}`;
             return (
               <View style={[styles.row, { borderBottomColor: theme.border }]}>
+                {item.artwork_url ? (
+                  <CoverArt uri={item.artwork_url} size={44} title={item.title} borderRadius={6} />
+                ) : null}
                 <View style={styles.info}>
                   <Text style={[styles.rowTitle, { color: theme.fg }]}>{item.title}</Text>
                   <Text style={[styles.rowSub, { color: theme.fgMuted }]}>

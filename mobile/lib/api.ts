@@ -110,6 +110,22 @@ export const downloadAllArtist = (artistId: string) =>
 // Track search + individual download
 export const searchTracks = (q: string) =>
   req<any[]>('GET', `/api/v1/tracks/search?q=${encodeURIComponent(q)}`);
+
+// iTunes Search API — popularity-ranked, no auth, CORS-safe in React Native
+export async function searchTracksItunes(q: string): Promise<any[]> {
+  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&entity=song&limit=25`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`iTunes search ${r.status}`);
+  const data = await r.json();
+  return (data.results ?? []).map((t: any) => ({
+    title: t.trackName ?? '',
+    artist: t.artistName ?? '',
+    album: t.collectionName ?? '',
+    artwork_url: t.artworkUrl100 ?? null,
+    itunes_id: t.trackId,
+    mb_recording_id: undefined,
+  }));
+}
 export const downloadTrack = (body: { title: string; artist: string; mb_recording_id?: string }) =>
   req<any>('POST', '/api/v1/tracks/download', body);
 
