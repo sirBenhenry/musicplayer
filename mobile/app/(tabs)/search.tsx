@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
@@ -17,22 +17,46 @@ export default function SearchScreen() {
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [actioning, setActioning] = useState<string | null>(null);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchGeneration = useRef(0);
 
-  const doSearch = async (q: string, activeTab: Tab = tab) => {
-    setQuery(q);
-    setResults([]);
-    if (q.length < 2) return;
+  const execSearch = useCallback(async (q: string, activeTab: Tab, generation: number) => {
+    if (q.length < 2) { setResults([]); setLoading(false); return; }
     setLoading(true);
     try {
+      let res: any[];
       if (activeTab === 'library') {
-        setResults(await getSongs({ search: q, limit: '40' }));
+        res = await getSongs({ search: q, limit: '40' });
       } else if (activeTab === 'artists') {
-        setResults(await searchNewArtists(q));
+        res = await searchNewArtists(q);
       } else {
-        setResults(await searchTracks(q));
+        res = await searchTracks(q);
       }
-    } catch { setResults([]); }
-    setLoading(false);
+      // Discard result if a newer search has been issued
+      if (generation === searchGeneration.current) {
+        setResults(res);
+        setLoading(false);
+      }
+    } catch {
+      if (generation === searchGeneration.current) {
+        setResults([]);
+        setLoading(false);
+      }
+    }
+  }, []);
+
+  const doSearch = (q: string, activeTab: Tab = tab) => {
+    setQuery(q);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    if (q.length < 2) { setResults([]); setLoading(false); return; }
+    setLoading(true);
+    const gen = ++searchGeneration.current;
+    // Library search is local — no debounce needed; MB search debounces 350ms
+    if (activeTab !== 'library') {
+      debounceTimer.current = setTimeout(() => execSearch(q, activeTab, gen), 350);
+    } else {
+      execSearch(q, activeTab, gen);
+    }
   };
 
   const onTabChange = (t: Tab) => {
@@ -55,7 +79,11 @@ export default function SearchScreen() {
     const key = `${track.artist}/${track.title}`;
     setActioning(key);
     try {
-      await downloadTrack({ title: track.title, artist: track.artist });
+      await downloadTrack({
+        title: track.title,
+        artist: track.artist,
+        mb_recording_id: track.mb_recording_id || undefined,
+      });
       Alert.alert('Queued', `Searching for "${track.title}" by ${track.artist}`);
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'Download failed');
