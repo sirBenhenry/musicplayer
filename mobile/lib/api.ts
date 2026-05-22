@@ -56,6 +56,10 @@ export const getTodayPlaylists = (profileId?: string) => {
   const qs = profileId ? `?profile_id=${profileId}` : '';
   return req<any[]>('GET', `/api/v1/discovery/today${qs}`);
 };
+export const getPlaylists = (profileId?: string) => {
+  const qs = profileId ? `?profile_id=${profileId}` : '';
+  return req<any[]>('GET', `/api/v1/discovery/playlists${qs}`);
+};
 export const getPlaylist = (id: string) => req<any>('GET', `/api/v1/discovery/playlists/${id}`);
 export const pausePlaylist = (id: string) =>
   req<void>('POST', `/api/v1/discovery/playlists/${id}/pause`);
@@ -106,7 +110,7 @@ export const downloadAllArtist = (artistId: string) =>
 // Track search + individual download
 export const searchTracks = (q: string) =>
   req<any[]>('GET', `/api/v1/tracks/search?q=${encodeURIComponent(q)}`);
-export const downloadTrack = (body: { title: string; artist: string }) =>
+export const downloadTrack = (body: { title: string; artist: string; mb_recording_id?: string }) =>
   req<any>('POST', '/api/v1/tracks/download', body);
 
 // Download management
@@ -118,3 +122,15 @@ export const getDownloads = (status?: string, page = 1, limit = 50) => {
 export const getFailedDownloads = () => req<any[]>('GET', '/api/v1/downloads/failed');
 export const retryDownload = (id: string) => req<any>('POST', `/api/v1/downloads/${id}/retry`);
 export const deleteDownload = (id: string) => req<void>('DELETE', `/api/v1/downloads/${id}`);
+export const getDownloadPipeline = (id: string) =>
+  req<any>('GET', `/api/v1/downloads/${id}/pipeline`);
+export const reviewDownload = (id: string, action: 'confirm' | 'wrong_song' | 'bad_quality') =>
+  req<any>('POST', `/api/v1/downloads/${id}/review`, { action });
+
+// Notifications
+export const getNotifications = () => req<any[]>('GET', '/api/v1/notifications');
+export const getNotificationCount = () => req<{ count: number }>('GET', '/api/v1/notifications/count');
+export const dismissNotification = (id: string) =>
+  req<any>('POST', `/api/v1/notifications/${id}/dismiss`);
+export const dismissAllNotifications = () =>
+  req<any>('POST', '/api/v1/notifications/dismiss-all');

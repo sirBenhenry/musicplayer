@@ -1,16 +1,23 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
 import { useStore } from '../../lib/store';
 import { SongRow } from '../../components/shared/SongRow';
 import { CoverArt } from '../../components/shared/CoverArt';
-import { getSongs, getArtists, getAlbums, getStreamUrl, getCoverUrl } from '../../lib/api';
+import { getSongs, getArtists, getPlaylists, getStreamUrl, getCoverUrl } from '../../lib/api';
 import { playSong } from '../../lib/audio';
 import { font, radius } from '../../lib/tokens';
 
-type Tab = 'Songs' | 'Artists' | 'Albums';
+type Tab = 'Songs' | 'Artists' | 'Playlists';
+
+const SLOT_LABEL: Record<string, string> = {
+  close_match: 'Close Match',
+  broader_taste: 'Broader Taste',
+  new_genre: 'New Genre',
+  artist_of_day: 'Artist of the Day',
+};
 
 export default function LibraryScreen() {
   const theme = useTheme();
@@ -21,15 +28,15 @@ export default function LibraryScreen() {
   const [tab, setTab] = useState<Tab>('Songs');
   const [songs, setSongs] = useState<any[]>([]);
   const [artists, setArtists] = useState<any[]>([]);
-  const [albums, setAlbums] = useState<any[]>([]);
+  const [playlists, setPlaylists] = useState<any[]>([]);
 
   useEffect(() => {
     getSongs({}).then(setSongs).catch(() => {});
     getArtists().then(setArtists).catch(() => {});
-    getAlbums().then(setAlbums).catch(() => {});
-  }, []);
+    getPlaylists(activeProfileId ?? undefined).then(setPlaylists).catch(() => {});
+  }, [activeProfileId]);
 
-  const TABS: Tab[] = ['Songs', 'Artists', 'Albums'];
+  const TABS: Tab[] = ['Songs', 'Artists', 'Playlists'];
 
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
@@ -92,23 +99,37 @@ export default function LibraryScreen() {
         />
       )}
 
-      {tab === 'Albums' && (
+      {tab === 'Playlists' && (
         <FlatList
-          data={albums}
-          keyExtractor={(a) => a.id}
-          numColumns={2}
+          data={playlists}
+          keyExtractor={(p) => p.id}
           renderItem={({ item }) => (
-            <View style={styles.albumItem}>
-              <CoverArt uri={item.cover_url} size={160} title={item.title} />
-              <Text style={[styles.albumTitle, { color: theme.fgStrong }]} numberOfLines={1}>
-                {item.title}
-              </Text>
-              <Text style={[styles.albumArtist, { color: theme.fgMuted }]} numberOfLines={1}>
-                {item.artist_name ?? ''}
-              </Text>
-            </View>
+            <TouchableOpacity
+              onPress={() => router.push(`/playlist/${item.id}`)}
+              style={[styles.playlistRow, { borderBottomColor: theme.borderSoft }]}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.slotBadge, { backgroundColor: theme.accentBg }]}>
+                <Text style={[styles.slotText, { color: theme.accent, fontFamily: font.mono }]}>
+                  {(SLOT_LABEL[item.slot] ?? item.slot).toUpperCase()}
+                </Text>
+              </View>
+              <View style={styles.playlistInfo}>
+                <Text style={[styles.playlistDate, { color: theme.fgStrong }]}>{item.date}</Text>
+                <Text style={[styles.playlistMeta, { color: theme.fgMuted }]}>
+                  {item.song_count} songs
+                  {item.paused_to_tomorrow ? ' · paused' : ''}
+                </Text>
+              </View>
+              <Text style={{ color: theme.fgSoft, fontSize: 18 }}>›</Text>
+            </TouchableOpacity>
           )}
-          contentContainerStyle={{ padding: 16, gap: 8, paddingBottom: 160 }}
+          ListEmptyComponent={
+            <Text style={[styles.empty, { color: theme.fgMuted }]}>
+              No playlists yet. They're generated daily by the discovery pipeline.
+            </Text>
+          }
+          contentContainerStyle={{ paddingBottom: 160 }}
         />
       )}
     </View>
@@ -126,7 +147,11 @@ const styles = StyleSheet.create({
   artistName: { flex: 1, fontSize: 15, fontWeight: '500' },
   followedBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 100 },
   followedText: { fontSize: 11.5, fontWeight: '600' },
-  albumItem: { flex: 1, padding: 4 },
-  albumTitle: { fontSize: 13, fontWeight: '500', marginTop: 8, lineHeight: 18 },
-  albumArtist: { fontSize: 12, marginTop: 2 },
+  playlistRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  slotBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  slotText: { fontSize: 9.5, fontWeight: '700', letterSpacing: 0.1 },
+  playlistInfo: { flex: 1 },
+  playlistDate: { fontSize: 15, fontWeight: '500' },
+  playlistMeta: { fontSize: 12, marginTop: 2 },
+  empty: { fontSize: 14, textAlign: 'center', marginTop: 60, paddingHorizontal: 40, lineHeight: 22 },
 });
