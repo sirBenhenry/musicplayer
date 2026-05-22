@@ -2,7 +2,7 @@
   "expo": {
     "name": "Music",
     "slug": "musicapp",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "musicapp",
@@ -50,12 +50,7 @@
     "extra": {
       "router": {
         "origin": false
-      },
-      "eas": {
-        "projectId": "e8fd7b22-aea2-4116-b48a-fa42a2a4426b"
       }
-    },
-    "owner": "sirbenhenry",
-    "ios": {}
+    }
   }
 }
