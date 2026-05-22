@@ -108,8 +108,8 @@ export const downloadAllArtist = (artistId: string) =>
   req<any>('POST', `/api/v1/artists/${artistId}/download-all`);
 
 // Track search + individual download
-export const searchTracks = (q: string) =>
-  req<any[]>('GET', `/api/v1/tracks/search?q=${encodeURIComponent(q)}`);
+export const searchTracks = (q: string, excludeLive = false) =>
+  req<any[]>('GET', `/api/v1/tracks/search?q=${encodeURIComponent(q)}&exclude_live=${excludeLive}`);
 
 // iTunes Search API — popularity-ranked, no auth, CORS-safe in React Native
 export async function searchTracksItunes(q: string): Promise<any[]> {

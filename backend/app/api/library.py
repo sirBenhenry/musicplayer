@@ -150,11 +150,13 @@ class TrackSearchResult(BaseModel):
     title: str
     artist: str
     album: str = ""
+    mb_recording_id: str = ""
 
 
 class DownloadTrackRequest(BaseModel):
     title: str
     artist: str
+    mb_recording_id: Optional[str] = None
 
 
 class DownloadAllRequest(BaseModel):
@@ -163,10 +165,13 @@ class DownloadAllRequest(BaseModel):
 
 
 @router.get("/tracks/search", response_model=list[TrackSearchResult])
-async def search_tracks_endpoint(q: str = Query(..., min_length=2)):
+async def search_tracks_endpoint(
+    q: str = Query(..., min_length=2),
+    exclude_live: bool = Query(False),
+):
     """Search for individual tracks via MusicBrainz recordings."""
     from ..services.musicbrainz import search_recordings
-    results = await search_recordings(q, limit=30)
+    results = await search_recordings(q, limit=30, exclude_live=exclude_live)
     return [TrackSearchResult(**r) for r in results[:30]]
 
 
@@ -174,7 +179,10 @@ async def search_tracks_endpoint(q: str = Query(..., min_length=2)):
 async def download_track(body: DownloadTrackRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     """Queue download of a single track via the multi-source pipeline."""
     from ..services.download_pipeline import request_download
-    job = await request_download(db, item_type="track", artist=body.artist, title=body.title)
+    job = await request_download(
+        db, item_type="track", artist=body.artist, title=body.title,
+        mb_recording_id=body.mb_recording_id,
+    )
     return {"status": "queued", "job_id": str(job.id), "message": f"Searching for {body.artist} — {body.title}"}
 
 
@@ -183,7 +191,7 @@ async def download_all_artist(
     artist_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Queue per-release discography download via multi-source pipeline."""
+    """Queue every individual recording for an artist via MusicBrainz, including features."""
     from ..services import musicbrainz
     from ..services.download_pipeline import request_download
     a = await db.get(Artist, artist_id)
@@ -192,16 +200,23 @@ async def download_all_artist(
     mbid = getattr(a, 'musicbrainz_id', None)
     if not mbid:
         raise HTTPException(422, "Artist has no MusicBrainz ID — add via Discover tab first")
-    releases = await musicbrainz.get_release_groups(mbid)
-    if not releases:
-        raise HTTPException(422, f"No releases found on MusicBrainz for {a.name}")
+    recordings = await musicbrainz.get_artist_recordings(mbid)
+    if not recordings:
+        raise HTTPException(422, f"No recordings found on MusicBrainz for {a.name}")
     queued = 0
-    for release in releases:
-        title = release.get("title", "").strip()
+    for rec in recordings:
+        title = rec.get("title", "").strip()
+        mb_recording_id = rec.get("mb_recording_id")
         if title:
-            await request_download(db, item_type="album", artist=a.name, title=title)
+            await request_download(
+                db,
+                item_type="track",
+                artist=a.name,
+                title=title,
+                mb_recording_id=mb_recording_id,
+            )
             queued += 1
-    return {"status": "queued", "count": queued, "message": f"Queued {queued} releases for {a.name}"}
+    return {"status": "queued", "count": queued, "message": f"Queued {queued} recordings for {a.name}"}
 
 
 @router.get("/artists/search", response_model=list[ArtistSearchResult])

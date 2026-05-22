@@ -3,27 +3,32 @@ import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity, Activity
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
 import { SongRow } from '../../components/shared/SongRow';
-import { CoverArt } from '../../components/shared/CoverArt';
-import { getSongs, getStreamUrl, searchNewArtists, importArtist, searchTracksItunes, downloadTrack } from '../../lib/api';
+import { getSongs, getStreamUrl, searchNewArtists, importArtist, searchTracks, downloadTrack } from '../../lib/api';
 import { playSong } from '../../lib/audio';
 import { radius } from '../../lib/tokens';
 
 type Tab = 'library' | 'artists' | 'songs';
+type LiveFilter = 'all' | 'no_live';
+
+const LIVE_FILTERS: { key: LiveFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'no_live', label: 'No live' },
+];
 
 export default function SearchScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('library');
+  const [liveFilter, setLiveFilter] = useState<LiveFilter>('all');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [actioning, setActioning] = useState<string | null>(null);
-  // currentQuery ref: the query string that should be displayed when a response arrives.
-  // If response.query !== currentQuery.current, the user has typed more — discard it.
   const currentQuery = useRef('');
+  const currentFilter = useRef<LiveFilter>('all');
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const runSearch = async (q: string, activeTab: Tab) => {
+  const runSearch = async (q: string, activeTab: Tab, filter: LiveFilter) => {
     try {
       let res: any[];
       if (activeTab === 'library') {
@@ -31,39 +36,44 @@ export default function SearchScreen() {
       } else if (activeTab === 'artists') {
         res = await searchNewArtists(q);
       } else {
-        res = await searchTracksItunes(q);
+        res = await searchTracks(q, filter === 'no_live');
       }
-      if (q === currentQuery.current) {
+      if (q === currentQuery.current && filter === currentFilter.current) {
         setResults(res);
         setLoading(false);
       }
     } catch {
-      if (q === currentQuery.current) {
+      if (q === currentQuery.current && filter === currentFilter.current) {
         setResults([]);
         setLoading(false);
       }
     }
   };
 
-  const doSearch = (q: string, activeTab: Tab = tab) => {
+  const doSearch = (q: string, activeTab: Tab = tab, filter: LiveFilter = liveFilter) => {
     setQuery(q);
     currentQuery.current = q;
+    currentFilter.current = filter;
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    // Always clear stale results immediately so old results never bleed through
     setResults([]);
     if (q.length < 2) { setLoading(false); return; }
     if (activeTab === 'library') {
-      runSearch(q, activeTab);
+      runSearch(q, activeTab, filter);
     } else {
       setLoading(true);
-      debounceTimer.current = setTimeout(() => runSearch(q, activeTab), 350);
+      debounceTimer.current = setTimeout(() => runSearch(q, activeTab, filter), 350);
     }
   };
 
   const onTabChange = (t: Tab) => {
     setTab(t);
     setResults([]);
-    if (query.length >= 2) doSearch(query, t);
+    if (query.length >= 2) doSearch(query, t, liveFilter);
+  };
+
+  const onFilterChange = (f: LiveFilter) => {
+    setLiveFilter(f);
+    if (query.length >= 2) doSearch(query, tab, f);
   };
 
   const handleImportArtist = async (artist: any) => {
@@ -206,43 +216,63 @@ export default function SearchScreen() {
       )}
 
       {tab === 'songs' && (
-        <FlatList
-          data={results}
-          keyExtractor={(t) => t.itunes_id ? String(t.itunes_id) : `${t.artist}/${t.title}`}
-          renderItem={({ item }) => {
-            const key = `${item.artist}/${item.title}`;
-            return (
-              <View style={[styles.row, { borderBottomColor: theme.border }]}>
-                {item.artwork_url ? (
-                  <CoverArt uri={item.artwork_url} size={44} title={item.title} borderRadius={6} />
-                ) : null}
-                <View style={styles.info}>
-                  <Text style={[styles.rowTitle, { color: theme.fg }]}>{item.title}</Text>
-                  <Text style={[styles.rowSub, { color: theme.fgMuted }]}>
-                    {item.artist}{item.album ? ` · ${item.album}` : ''}
-                  </Text>
+        <>
+          <View style={[styles.filterRow, { borderBottomColor: theme.borderSoft }]}>
+            {LIVE_FILTERS.map(f => (
+              <TouchableOpacity
+                key={f.key}
+                onPress={() => onFilterChange(f.key)}
+                style={[
+                  styles.filterChip,
+                  liveFilter === f.key
+                    ? { backgroundColor: theme.accent }
+                    : { backgroundColor: theme.bgElev, borderColor: theme.borderSoft },
+                ]}
+              >
+                <Text style={[
+                  styles.filterChipText,
+                  { color: liveFilter === f.key ? theme.onAccent : theme.fgMuted },
+                ]}>
+                  {f.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <FlatList
+            data={results}
+            keyExtractor={(t) => t.mb_recording_id || `${t.artist}/${t.title}`}
+            renderItem={({ item }) => {
+              const key = `${item.artist}/${item.title}`;
+              return (
+                <View style={[styles.row, { borderBottomColor: theme.border }]}>
+                  <View style={styles.info}>
+                    <Text style={[styles.rowTitle, { color: theme.fg }]}>{item.title}</Text>
+                    <Text style={[styles.rowSub, { color: theme.fgMuted }]}>
+                      {item.artist}{item.album ? ` · ${item.album}` : ''}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { backgroundColor: theme.accentBg, borderColor: theme.accentTint }]}
+                    onPress={() => handleDownloadTrack(item)}
+                    disabled={actioning === key}
+                  >
+                    {actioning === key
+                      ? <ActivityIndicator size="small" color={theme.accent} />
+                      : <Text style={[styles.actionBtnText, { color: theme.accent }]}>↓</Text>}
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: theme.accentBg, borderColor: theme.accentTint }]}
-                  onPress={() => handleDownloadTrack(item)}
-                  disabled={actioning === key}
-                >
-                  {actioning === key
-                    ? <ActivityIndicator size="small" color={theme.accent} />
-                    : <Text style={[styles.actionBtnText, { color: theme.accent }]}>↓</Text>}
-                </TouchableOpacity>
+              );
+            }}
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Text style={[styles.emptyText, { color: theme.fgMuted }]}>
+                  {query.length === 0 ? 'Search for songs to download individually' : 'No songs found'}
+                </Text>
               </View>
-            );
-          }}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Text style={[styles.emptyText, { color: theme.fgMuted }]}>
-                {query.length === 0 ? 'Search for songs to download individually' : 'No songs found'}
-              </Text>
-            </View>
-          }
-          contentContainerStyle={{ paddingBottom: 160 }}
-        />
+            }
+            contentContainerStyle={{ paddingBottom: 160 }}
+          />
+        </>
       )}
     </View>
   );
@@ -267,4 +297,7 @@ const styles = StyleSheet.create({
   rowBio: { fontSize: 12, lineHeight: 17 },
   actionBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1, minWidth: 50, alignItems: 'center' },
   actionBtnText: { fontSize: 14, fontWeight: '600' },
+  filterRow: { flexDirection: 'row', paddingHorizontal: 20, paddingVertical: 8, gap: 8, borderBottomWidth: StyleSheet.hairlineWidth },
+  filterChip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1 },
+  filterChipText: { fontSize: 12, fontWeight: '600' },
 });
