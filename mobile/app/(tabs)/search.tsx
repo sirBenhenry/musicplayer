@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
@@ -17,12 +17,12 @@ export default function SearchScreen() {
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [actioning, setActioning] = useState<string | null>(null);
+  // currentQuery ref: the query string that should be displayed when a response arrives.
+  // If response.query !== currentQuery.current, the user has typed more — discard it.
+  const currentQuery = useRef('');
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchGeneration = useRef(0);
 
-  const execSearch = useCallback(async (q: string, activeTab: Tab, generation: number) => {
-    if (q.length < 2) { setResults([]); setLoading(false); return; }
-    setLoading(true);
+  const runSearch = async (q: string, activeTab: Tab) => {
     try {
       let res: any[];
       if (activeTab === 'library') {
@@ -32,30 +32,28 @@ export default function SearchScreen() {
       } else {
         res = await searchTracks(q);
       }
-      // Discard result if a newer search has been issued
-      if (generation === searchGeneration.current) {
+      if (q === currentQuery.current) {
         setResults(res);
         setLoading(false);
       }
     } catch {
-      if (generation === searchGeneration.current) {
+      if (q === currentQuery.current) {
         setResults([]);
         setLoading(false);
       }
     }
-  }, []);
+  };
 
   const doSearch = (q: string, activeTab: Tab = tab) => {
     setQuery(q);
+    currentQuery.current = q;
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     if (q.length < 2) { setResults([]); setLoading(false); return; }
-    setLoading(true);
-    const gen = ++searchGeneration.current;
-    // Library search is local — no debounce needed; MB search debounces 350ms
-    if (activeTab !== 'library') {
-      debounceTimer.current = setTimeout(() => execSearch(q, activeTab, gen), 350);
+    if (activeTab === 'library') {
+      runSearch(q, activeTab);
     } else {
-      execSearch(q, activeTab, gen);
+      setLoading(true);
+      debounceTimer.current = setTimeout(() => runSearch(q, activeTab), 350);
     }
   };
 
