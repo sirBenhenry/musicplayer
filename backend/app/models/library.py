@@ -53,6 +53,8 @@ class Song(Base):
     album_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("albums.id"), nullable=True)
     duration_sec: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    title_romanized: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    display_artist: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     profile_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=True)
     needs_profile_assignment: Mapped[bool] = mapped_column(Boolean, default=False)
     feature_vector: Mapped[Optional[list[float]]] = mapped_column(Vector(128), nullable=True)

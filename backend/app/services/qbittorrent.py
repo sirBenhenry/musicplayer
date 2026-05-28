@@ -60,6 +60,10 @@ async def add_torrent(url: str, category: str = "music", save_path: str | None =
     if save_path:
         data["savepath"] = save_path
     try:
+        # Snapshot existing hashes so we can identify the newly added torrent
+        existing = await get_torrents(category=category, filter="all")
+        existing_hashes = {t["hash"] for t in existing}
+
         r = await _req("POST", "/torrents/add", data=data)
         # qBittorrent <5: returns "Ok." text on success
         # qBittorrent >=5: returns JSON {"success_count":N,"pending_count":N,"failure_count":N}
@@ -76,13 +80,14 @@ async def add_torrent(url: str, category: str = "music", save_path: str | None =
                 pass
 
         if added:
-            await __import__("asyncio").sleep(1)  # let qBittorrent register the torrent
-            torrents = await get_torrents(category=category, filter="all")
-            for t in torrents:
-                if t.get("magnet_uri", "").startswith(url[:40]) or url in t.get("magnet_uri", ""):
-                    return t["hash"]
-            if torrents:
-                return torrents[-1]["hash"]
+            # Wait for qBit to register the new torrent, then find it by diff
+            for attempt in range(5):
+                await __import__("asyncio").sleep(1 + attempt)
+                new_torrents = await get_torrents(category=category, filter="all")
+                for t in new_torrents:
+                    if t["hash"] not in existing_hashes:
+                        return t["hash"]
+            log.warning("add_torrent: new torrent hash not found after 5 polls for %s", url[:60])
         else:
             log.error("qBittorrent add_torrent unexpected response: %s", r.text)
     except Exception as e:
@@ -99,3 +104,13 @@ async def get_torrents(category: str = "music", filter: str = "completed") -> li
     except Exception as e:
         log.error("qBittorrent get_torrents failed: %s", e)
         return []
+
+
+async def delete_torrent(qb_hash: str, delete_files: bool = False) -> None:
+    """Remove a torrent from qBittorrent (optionally delete downloaded files)."""
+    try:
+        await _req("POST", "/torrents/delete",
+                   data={"hashes": qb_hash, "deleteFiles": str(delete_files).lower()})
+        log.info("qBittorrent: deleted torrent %s", qb_hash[:8])
+    except Exception as e:
+        log.warning("qBittorrent delete_torrent failed for %s: %s", qb_hash[:8], e)

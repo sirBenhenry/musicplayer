@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import {
-  ScrollView, View, Text, TouchableOpacity, StyleSheet, Dimensions
+  ScrollView, View, Text, Pressable, StyleSheet, Dimensions
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
 import { useStore } from '../../lib/store';
 import { CoverArt } from '../../components/shared/CoverArt';
-import { getTodayPlaylists, getArtists, getStreamUrl } from '../../lib/api';
+import { Icon } from '../../components/shared/Icon';
+import { getTodayPlaylists, getArtists, getStreamUrl, getCoverUrl } from '../../lib/api';
 import { playSong } from '../../lib/audio';
 import { font, radius } from '../../lib/tokens';
 
@@ -22,6 +23,20 @@ function greeting() {
   return 'Late evening';
 }
 
+function periodWord() {
+  const h = new Date().getHours();
+  if (h < 5) return 'night';
+  if (h < 12) return 'morning';
+  if (h < 17) return 'afternoon';
+  if (h < 21) return 'evening';
+  return 'night';
+}
+
+function playlistCoverUrl(pl: any): string | null {
+  const song = pl?.songs?.find?.((s: any) => s.navidrome_id);
+  return song ? getCoverUrl(song.navidrome_id) : null;
+}
+
 export default function HomeScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -32,13 +47,12 @@ export default function HomeScreen() {
 
   const profile = profiles.find((p) => p.id === activeProfileId) ?? profiles[0];
   const weekday = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-  const period = greeting().split(' ')[1] ?? 'day';
 
   useEffect(() => {
     if (!activeProfileId) return;
     getTodayPlaylists(activeProfileId).then(setPlaylists).catch(() => {});
     getArtists({ followed: 'true' }).then((artists: any[]) => {
-      const nr = artists.find((a) => a.new_release_flagged_at);
+      const nr = artists.find((a) => a.new_release_flagged_at || a.new_release);
       setNewReleaseArtist(nr ?? null);
     }).catch(() => {});
   }, [activeProfileId]);
@@ -61,43 +75,45 @@ export default function HomeScreen() {
       contentContainerStyle={{ paddingBottom: 160 }}
       showsVerticalScrollIndicator={false}
     >
+      {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
         <Text style={[styles.greetLabel, { color: theme.fgMuted, fontFamily: font.mono }]}>
           {greeting().toUpperCase()}
         </Text>
         {profile ? (
-          <TouchableOpacity
+          <Pressable
             style={styles.profileChip}
-            activeOpacity={0.7}
             onPress={() => setProfileMenuOpen(true)}
           >
-            <View style={[styles.profileDot, { backgroundColor: `oklch(70% 0.08 ${profile.hue})` }]}>
+            <View style={[styles.profileDot, { backgroundColor: profileHue(profile.hue) }]}>
               <Text style={styles.profileGlyph}>{profile.glyph}</Text>
             </View>
             <Text style={[styles.profileName, { color: theme.fgStrong }]}>{profile.name}</Text>
-            <Text style={{ color: theme.fgMuted, fontSize: 11, lineHeight: 14 }}>▾</Text>
-          </TouchableOpacity>
+            <Icon name="chevronDown" color={theme.fgMuted} size={14} />
+          </Pressable>
         ) : (
-          <TouchableOpacity onPress={() => router.push('/settings')} style={{ padding: 6 }}>
-            <Text style={{ color: theme.fgMuted, fontSize: 20 }}>⚙</Text>
-          </TouchableOpacity>
+          <Pressable onPress={() => router.push('/settings')} style={{ padding: 6 }}>
+            <Icon name="settings" color={theme.fgMuted} size={20} />
+          </Pressable>
         )}
       </View>
 
       <View style={styles.titleWrap}>
-        <Text style={[styles.title, { color: theme.fgStrong }]}>
+        <Text style={[styles.title, { color: theme.fgStrong, fontFamily: font.display }]}>
           {weekday}{' '}
-          <Text style={{ color: theme.fgMuted }}>{period}</Text>
+          <Text style={{ color: theme.fgMuted }}>{periodWord()}</Text>
         </Text>
       </View>
 
-      {/* New release */}
+      {/* New release banner */}
       {newReleaseArtist && (
         <View style={{ paddingHorizontal: 20, marginBottom: 22 }}>
-          <TouchableOpacity
+          <Pressable
             onPress={() => router.push(`/artist/${newReleaseArtist.id}`)}
-            style={[styles.releaseBanner, { backgroundColor: theme.bgElev, borderColor: theme.borderSoft }]}
-            activeOpacity={0.8}
+            style={({ pressed }) => [
+              styles.releaseBanner,
+              { backgroundColor: theme.bgElev, borderColor: theme.borderSoft, opacity: pressed ? 0.85 : 1 },
+            ]}
           >
             <CoverArt uri={null} size={36} title={newReleaseArtist.name} borderRadius={18} />
             <View style={{ flex: 1, minWidth: 0 }}>
@@ -111,7 +127,8 @@ export default function HomeScreen() {
                 {newReleaseArtist.name}
               </Text>
             </View>
-          </TouchableOpacity>
+            <Icon name="chevronRight" color={theme.fgMuted} size={16} />
+          </Pressable>
         </View>
       )}
 
@@ -133,50 +150,71 @@ export default function HomeScreen() {
       {/* Hero — Close Match */}
       {close && (
         <View style={{ paddingHorizontal: 20, marginBottom: 12 }}>
-          <TouchableOpacity
+          <Pressable
             onPress={() => router.push(`/playlist/${close.id}`)}
-            style={[styles.heroCard, { backgroundColor: theme.surface, borderColor: theme.borderSoft }]}
-            activeOpacity={0.9}
+            style={({ pressed }) => [
+              styles.heroCard,
+              { backgroundColor: theme.surface, borderColor: theme.borderSoft, opacity: pressed ? 0.92 : 1 },
+            ]}
           >
             <View style={styles.heroImgWrap}>
-              <CoverArt uri={null} size={SW - 40} title="Close Match" borderRadius={0} />
-              <View style={styles.heroGradient} />
+              <CoverArt
+                uri={playlistCoverUrl(close)}
+                size={SW - 40}
+                title="Close Match"
+                borderRadius={0}
+                style={{ width: '100%', height: 188 }}
+              />
+              {/* gradient overlay — bottom half only */}
+              <View style={[StyleSheet.absoluteFillObject, { justifyContent: 'flex-end' }]} pointerEvents="none">
+                <View style={{ height: '60%', backgroundColor: 'rgba(0,0,0,0.5)' }} />
+              </View>
               <View style={styles.heroLabel}>
                 <Text style={[styles.heroSlot, { fontFamily: font.mono }]}>CLOSE MATCH</Text>
               </View>
               <View style={styles.heroBottom}>
-                <Text style={styles.heroTitle}>Today's picks</Text>
-                <TouchableOpacity
+                <Text style={[styles.heroTitle, { fontFamily: font.display }]}>
+                  {close.title ?? "Today's picks"}
+                </Text>
+                <Pressable
                   onPress={() => playFirst(close)}
                   style={styles.heroPlay}
                   hitSlop={8}
                 >
-                  <Text style={{ fontSize: 20, color: '#1f1a14' }}>▶</Text>
-                </TouchableOpacity>
+                  <Icon name="play" color="#1f1a14" size={20} />
+                </Pressable>
               </View>
             </View>
-          </TouchableOpacity>
+          </Pressable>
         </View>
       )}
 
-      {/* Artist of day */}
+      {/* Artist of the Day */}
       {artist && (
         <View style={{ paddingHorizontal: 20, marginBottom: 12 }}>
-          <TouchableOpacity
+          <Pressable
             onPress={() => router.push(`/playlist/${artist.id}`)}
-            style={[styles.artistCard, { backgroundColor: theme.surface, borderColor: theme.borderSoft }]}
-            activeOpacity={0.85}
+            style={({ pressed }) => [
+              styles.artistCard,
+              { backgroundColor: theme.surface, borderColor: theme.borderSoft, opacity: pressed ? 0.85 : 1 },
+            ]}
           >
-            <CoverArt uri={null} size={64} title="Artist" borderRadius={32} />
-            <View style={{ flex: 1 }}>
+            <CoverArt
+              uri={playlistCoverUrl(artist)}
+              size={64}
+              title="Artist"
+              borderRadius={32}
+            />
+            <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={[styles.artistSlot, { color: theme.fgMuted, fontFamily: font.mono }]}>
                 ARTIST OF THE DAY
               </Text>
-              <Text style={[styles.artistName, { color: theme.fgStrong }]} numberOfLines={1}>
-                {artist.songs?.[0]?._artist_of_day ?? 'New artist'}
+              <Text style={[styles.artistName, { color: theme.fgStrong, fontFamily: font.display }]} numberOfLines={1}>
+                {artist.title ?? artist.songs?.[0]?._artist_of_day ?? 'New artist'}
               </Text>
             </View>
-          </TouchableOpacity>
+            <Icon name="chevronRight" color={theme.fgMuted} size={18} />
+          </Pressable>
         </View>
       )}
 
@@ -184,20 +222,24 @@ export default function HomeScreen() {
       <View style={styles.pair}>
         {[broader, genre].map((pl) =>
           pl ? (
-            <TouchableOpacity
+            <Pressable
               key={pl.id}
               onPress={() => router.push(`/playlist/${pl.id}`)}
-              style={{ flex: 1 }}
-              activeOpacity={0.85}
+              style={({ pressed }) => ({ flex: 1, opacity: pressed ? 0.85 : 1 })}
             >
-              <CoverArt uri={null} size={(SW - 52) / 2} title={pl.slot} />
+              <CoverArt
+                uri={playlistCoverUrl(pl)}
+                size={(SW - 52) / 2}
+                title={pl.slot}
+                style={{ width: '100%', aspectRatio: 1 }}
+              />
               <Text style={[styles.pairSlot, { color: theme.fgMuted, fontFamily: font.mono }]}>
                 {pl.slot === 'broader' ? 'BROADER' : 'NEW GENRE'}
               </Text>
               <Text style={[styles.pairTitle, { color: theme.fgStrong }]} numberOfLines={1}>
-                {pl.songs?.[0]?._genre ?? (pl.slot === 'broader' ? 'Broader taste' : 'New genre')}
+                {pl.title ?? (pl.slot === 'broader' ? 'Broader taste' : 'New genre')}
               </Text>
-            </TouchableOpacity>
+            </Pressable>
           ) : null,
         )}
       </View>
@@ -205,16 +247,49 @@ export default function HomeScreen() {
   );
 }
 
+function profileHue(hue: number): string {
+  return `hsl(${hue}, 35%, 60%)`;
+}
+
 const styles = StyleSheet.create({
-  header: { paddingHorizontal: 20, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingBottom: 4 },
+  header: {
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingBottom: 4,
+  },
   greetLabel: { fontSize: 10.5, letterSpacing: 0.12, fontWeight: '500' },
-  profileChip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 5, paddingHorizontal: 11, borderRadius: 100 },
-  profileDot: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  profileGlyph: { fontSize: 13 },
+  profileChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 5,
+    paddingLeft: 5,
+    paddingRight: 11,
+    borderRadius: 100,
+    marginTop: -4,
+  },
+  profileDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileGlyph: { fontSize: 13, color: '#fffdf8' },
   profileName: { fontSize: 12.5, fontWeight: '500' },
   titleWrap: { paddingHorizontal: 20, paddingBottom: 22 },
-  title: { fontSize: 30, fontWeight: '400', lineHeight: 34, letterSpacing: -0.015 },
-  releaseBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 10, borderRadius: 12, borderWidth: 1 },
+  title: { fontSize: 30, lineHeight: 34, letterSpacing: -0.015 },
+  releaseBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 10,
+    paddingRight: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
   releaseLabel: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
   dot: { width: 6, height: 6, borderRadius: 3 },
   releaseLabelText: { fontSize: 9.5, letterSpacing: 0.12, fontWeight: '500' },
@@ -222,15 +297,43 @@ const styles = StyleSheet.create({
   sectionLabel: { fontSize: 10.5, letterSpacing: 0.12, fontWeight: '500', paddingHorizontal: 20, marginBottom: 14 },
   heroCard: { borderRadius: radius.card, borderWidth: 1, overflow: 'hidden' },
   heroImgWrap: { height: 188, position: 'relative' },
-  heroGradient: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', /* gradient not possible inline */ },
   heroLabel: { position: 'absolute', top: 16, left: 16 },
   heroSlot: { fontSize: 10.5, color: 'rgba(255,255,255,0.85)', letterSpacing: 0.12, fontWeight: '500' },
-  heroBottom: { position: 'absolute', bottom: 16, left: 16, right: 16, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
-  heroTitle: { color: '#fff', fontSize: 28, fontWeight: '400', letterSpacing: -0.015 },
-  heroPlay: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  artistCard: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14, borderRadius: radius.card, borderWidth: 1 },
+  heroBottom: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 14,
+  },
+  heroTitle: { color: '#fff', fontSize: 28, lineHeight: 32, letterSpacing: -0.015, flex: 1 },
+  heroPlay: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 14,
+    elevation: 6,
+    flexShrink: 0,
+  },
+  artistCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    padding: 14,
+    borderRadius: radius.card,
+    borderWidth: 1,
+  },
   artistSlot: { fontSize: 10.5, letterSpacing: 0.12, fontWeight: '500', marginBottom: 3 },
-  artistName: { fontSize: 20, fontWeight: '400', letterSpacing: -0.01 },
+  artistName: { fontSize: 20, lineHeight: 24, letterSpacing: -0.01 },
   pair: { flexDirection: 'row', gap: 12, paddingHorizontal: 20, marginBottom: 32 },
   pairSlot: { fontSize: 10.5, letterSpacing: 0.12, fontWeight: '500', marginTop: 8, marginBottom: 2 },
   pairTitle: { fontSize: 13.5, fontWeight: '600', lineHeight: 18 },

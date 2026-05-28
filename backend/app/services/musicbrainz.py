@@ -66,25 +66,35 @@ def _build_artist_string(credits: list) -> str:
     return "".join(parts).strip(" ,&") or ""
 
 
-_LIVE_TITLE_PATTERNS = (
-    " live", "(live", "live at ", "live in ", "live from ", "live version",
-    "concert version", "- live", "live recording",
+_LIVE_PATTERNS = (
+    " live", "(live", "live at ", "live in ", "live from ",
+    "live version", "concert version", "- live", "live recording",
+)
+_REMIX_PATTERNS = (
+    " remix", "(remix", "- remix", " rmx", "(rmx",
+    "rework", "re-edit", "club mix", "dub mix", "extended mix",
+    "bootleg mix", "radio mix", "instrumental mix",
+)
+_JUNK_PATTERNS = (
+    "instrumental", "karaoke", "backing track", "minus one",
+    "a cappella", "acapella",
 )
 
 
-def _is_live_title(title: str) -> bool:
+def _title_matches(title: str, patterns: tuple) -> bool:
     t = title.lower()
-    return any(p in t for p in _LIVE_TITLE_PATTERNS)
+    return any(p in t for p in patterns)
 
 
-async def search_recordings(query: str, limit: int = 30, exclude_live: bool = False) -> list[dict]:
-    """Search MusicBrainz recordings. Accepts plain text or 'artist - title'.
+async def search_recordings(
+    query: str,
+    limit: int = 30,
+    search_filter: str = "all",
+) -> list[dict]:
+    """Search MusicBrainz recordings.
 
-    Plain text ≤3 words: phrase search in title. 4+ words: per-word cross-field
-    (recording OR artist) so "beat it jackson" finds MJ's Beat It.
-    exclude_live: appends -type:live to MB query + filters live-sounding titles.
-    Filters score < 40, deduplicates by recording ID.
-    Returns [{title, artist, album, mb_recording_id}].
+    search_filter: 'all' | 'no_live' | 'no_remixes' | 'studio'
+      studio = no live + no remixes + official releases only
     """
     query = query.strip()
     parts = [p.strip() for p in query.split(" - ", 1)]
@@ -93,13 +103,19 @@ async def search_recordings(query: str, limit: int = 30, exclude_live: bool = Fa
     else:
         words = [w for w in query.split() if w]
         if len(words) <= 3:
-            mb_query = f'recording:"{query}"'
+            # Bare unquoted search lets MB match across all fields including aliases
+            # and transliterated sort names — necessary for romaji → kanji matching
+            mb_query = query
         else:
             clauses = [f'(recording:{w} OR artist:{w})' for w in words]
             mb_query = ' AND '.join(clauses)
 
-    if exclude_live:
+    if search_filter == "no_live":
         mb_query = f'({mb_query}) AND -type:live'
+    elif search_filter == "no_remixes":
+        mb_query = f'({mb_query}) AND -type:remix'
+    elif search_filter == "studio":
+        mb_query = f'({mb_query}) AND -type:live AND -type:remix AND status:official'
 
     try:
         async with httpx.AsyncClient(timeout=20, headers=_HEADERS) as client:
@@ -113,6 +129,9 @@ async def search_recordings(query: str, limit: int = 30, exclude_live: bool = Fa
         log.error("MusicBrainz search_recordings(%r) failed: %s", query, e)
         return []
 
+    exclude_live = search_filter in ("no_live", "studio")
+    exclude_remixes = search_filter in ("no_remixes", "studio")
+
     seen: set[str] = set()
     results = []
     for rec in data.get("recordings", []):
@@ -124,7 +143,12 @@ async def search_recordings(query: str, limit: int = 30, exclude_live: bool = Fa
             continue
         seen.add(recording_id)
         title = rec.get("title", "")
-        if exclude_live and _is_live_title(title):
+        if exclude_live and _title_matches(title, _LIVE_PATTERNS):
+            continue
+        if exclude_remixes and _title_matches(title, _REMIX_PATTERNS):
+            continue
+        # Always drop karaoke/instrumental/backing tracks
+        if _title_matches(title, _JUNK_PATTERNS):
             continue
         credits = rec.get("artist-credit", [])
         artist = _build_artist_string(credits) or (credits[0].get("name", "") if credits else "")
@@ -181,12 +205,17 @@ async def get_artist_recordings(artist_mbid: str, max_recordings: int = 500) -> 
                     continue
                 seen.add(rid)
                 title = rec.get("title", "")
+                if not title:
+                    continue
+                if _title_matches(title, _JUNK_PATTERNS):
+                    continue
+                if _title_matches(title, _LIVE_PATTERNS):
+                    continue
                 credits = rec.get("artist-credit", [])
                 artist = _build_artist_string(credits) or (credits[0].get("name", "") if credits else "")
-                if title:
-                    results.append({"title": title, "artist": artist, "mb_recording_id": rid})
+                results.append({"title": title, "artist": artist, "mb_recording_id": rid})
 
-            total = data.get("recording-count", 0)
+            total = data.get("count", 0)  # MB returns "count" not "recording-count"
             offset += limit
             if offset >= min(total, max_recordings):
                 break
@@ -205,7 +234,7 @@ async def get_recording(recording_id: str) -> dict:
         async with httpx.AsyncClient(timeout=20, headers=_HEADERS) as client:
             r = await client.get(
                 f"{_BASE}/recording/{recording_id}",
-                params={"inc": "isrcs+artist-credits+releases", "fmt": "json"},
+                params={"inc": "isrcs+artist-credits+releases+aliases", "fmt": "json"},
             )
             r.raise_for_status()
             data = r.json()
@@ -227,9 +256,35 @@ async def get_recording(recording_id: str) -> dict:
     release_title = releases[0].get("title", "") if releases else ""
     release_mbid = releases[0].get("id", "") if releases else ""
 
+    canonical_title = data.get("title") or ""
+
+    # Extract romanized alias: prefer explicit -Latn locale, fallback to any ASCII alias
+    # when canonical title is non-ASCII (e.g. kanji → romaji)
+    aliases = data.get("aliases", [])
+    title_romanized: str | None = None
+    if not canonical_title.isascii():
+        _latn_locales = {"ja-Latn", "zh-Latn", "ko-Latn", "ru-Latn", "uk-Latn", "ar-Latn"}
+        for a in aliases:
+            if a.get("locale") in _latn_locales and a.get("name"):
+                title_romanized = a["name"]
+                break
+        if not title_romanized:
+            for a in aliases:
+                name = a.get("name", "")
+                if name and name != canonical_title and name.isascii():
+                    title_romanized = name
+                    break
+
+    title_aliases = [
+        a["name"] for a in aliases
+        if a.get("name") and a["name"] != canonical_title
+    ]
+
     return {
         "recording_id": recording_id,
-        "title": data.get("title", ""),
+        "title": canonical_title,
+        "title_romanized": title_romanized,
+        "title_aliases": title_aliases,
         "artist_name": artist_name,
         "artist_mbid": artist_mbid,
         "isrc": isrc,

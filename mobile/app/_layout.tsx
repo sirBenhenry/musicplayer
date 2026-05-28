@@ -14,8 +14,8 @@ import { InstrumentSerif_400Regular } from '@expo-google-fonts/instrument-serif'
 import { useStore } from '../lib/store';
 import { setupAudio } from '../lib/audio';
 import { getProfiles } from '../lib/api';
-import { MiniPlayer } from '../components/chrome/MiniPlayer';
 import { FullPlayer } from '../components/player/FullPlayer';
+import { QueueSheet } from '../components/player/QueueSheet';
 import { useTheme } from '../hooks/useTheme';
 
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -60,7 +60,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
 export default function RootLayout() {
   const theme = useTheme();
-  const { playerOpen, setPlayerOpen, hydrate, token, setProfiles, setActiveProfile } = useStore();
+  const { playerOpen, setPlayerOpen, queueOpen, setQueueOpen, hydrate, token, setProfiles, setActiveProfile } = useStore();
 
   const [fontsLoaded] = useFonts({
     Geist: Geist_400Regular,
@@ -97,10 +97,11 @@ export default function RootLayout() {
               <Stack screenOptions={{ headerShown: false }} />
             </AuthGuard>
 
-            <MiniPlayer onPress={() => setPlayerOpen(true)} />
-
             {playerOpen && (
               <FullPlayer onClose={() => setPlayerOpen(false)} />
+            )}
+            {queueOpen && (
+              <QueueSheet onClose={() => setQueueOpen(false)} />
             )}
           </View>
         </ErrorBoundary>

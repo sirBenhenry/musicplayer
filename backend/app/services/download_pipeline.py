@@ -13,16 +13,57 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import AsyncSessionLocal
 from ..models.events import DownloadJob, UserNotification
-from .scoring import ScoreBreakdown, score_candidate, review_status_for
+from .scoring import ScoreBreakdown, score_candidate, score_predownload, is_acceptable, review_status_for
 from .sources.base import Candidate
 from .sources import prowlarr_src, soulseek_src, youtube_src, archive_org_src
 
+import re as _re
+
 log = logging.getLogger(__name__)
 
+_MB_PREFIX_RE = _re.compile(
+    r'^mb:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*',
+    _re.IGNORECASE,
+)
+
 _BACKOFF_MINUTES = [15, 30, 60, 120, 240, 480, 720, 1440, 2880]
+_PIPELINE_SEM: asyncio.Semaphore | None = None
+
+
+def _pipeline_sem() -> asyncio.Semaphore:
+    global _PIPELINE_SEM
+    if _PIPELINE_SEM is None:
+        _PIPELINE_SEM = asyncio.Semaphore(4)
+    return _PIPELINE_SEM
+
+
+def _strip_version_suffix(title: str) -> str:
+    """Strip trailing parenthetical version tags so sources can find the canonical song.
+
+    'Beat It (Michael Jackson\'s Vision)' → 'Beat It'
+    'Thriller (2008 Remaster)'            → 'Thriller'
+    Loops to handle stacked suffixes like 'Title (Live) (Remaster)'.
+    """
+    t = title
+    while True:
+        stripped = _re.sub(r'\s*\([^)]+\)\s*$', '', t).strip()
+        if stripped == t or not stripped:
+            break
+        t = stripped
+    return t
 _MAX_RETRIES = len(_BACKOFF_MINUTES)
-_SOURCE_SEARCH_TIMEOUT = 50   # seconds per source before we give up waiting
-_MAX_DOWNLOAD_ATTEMPTS = 3    # try top-N candidates before giving up
+_MAX_DOWNLOAD_ATTEMPTS = 5    # try top-N candidates before giving up
+
+# Per-source search timeouts — wait long enough for slow sources (prowlarr queries 12 indexers)
+_SOURCE_TIMEOUTS: dict[str, float] = {
+    "qobuz":    30,
+    "prowlarr": 120,   # indexer searches are inherently slow; worth waiting for FLAC
+    "soulseek": 100,   # slskd needs time to collect peer responses
+    "spotdl":   60,
+    "youtube":  30,
+    "archive":  30,
+}
+_SOURCE_TIMEOUT_DEFAULT = 60
 
 
 @asynccontextmanager
@@ -88,6 +129,124 @@ async def _read_file_tags(file_path: str) -> dict:
         return {}
 
 
+async def _write_mb_tags(file_path: str, mb_recording: dict) -> bool:
+    """Write MusicBrainz metadata into file tags. Called after identity confirmed. Never raises."""
+    if not file_path or not mb_recording:
+        return False
+    try:
+        import mutagen
+        audio = mutagen.File(file_path, easy=True)
+        if not audio:
+            return False
+        if mb_recording.get("title"):
+            audio["title"] = [mb_recording["title"]]
+        if mb_recording.get("artist_name"):
+            audio["artist"] = [mb_recording["artist_name"]]
+        if mb_recording.get("release_title"):
+            audio["album"] = [mb_recording["release_title"]]
+        if mb_recording.get("isrc"):
+            audio["isrc"] = [mb_recording["isrc"]]
+        if mb_recording.get("recording_id"):
+            audio["musicbrainz_recordingid"] = [mb_recording["recording_id"]]
+        audio.save()
+        return True
+    except Exception as e:
+        log.warning("_write_mb_tags failed for %s: %s", file_path, e)
+        return False
+
+
+async def _fetch_and_embed_cover(
+    file_path: str,
+    artist: str,
+    title: str,
+    album: str | None,
+    mb_release_id: str | None,
+) -> bool:
+    """Fetch cover art from CAA or Last.fm and embed it. Returns True if embedded."""
+    import httpx
+    image_bytes: bytes | None = None
+    image_mime = "image/jpeg"
+
+    # 1. MusicBrainz Cover Art Archive (free, high quality)
+    if mb_release_id:
+        try:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                r = await client.get(
+                    f"https://coverartarchive.org/release/{mb_release_id}/front"
+                )
+                if r.status_code == 200:
+                    image_bytes = r.content
+                    ct = r.headers.get("content-type", "")
+                    if "png" in ct:
+                        image_mime = "image/png"
+        except Exception as e:
+            log.debug("CAA cover fetch failed for release %s: %s", mb_release_id, e)
+
+    # 2. Last.fm track.getInfo image
+    if not image_bytes:
+        try:
+            from .lastfm import _call
+            data = await _call("track.getInfo", artist=artist, track=title, autocorrect=1)
+            images = data.get("track", {}).get("album", {}).get("image", [])
+            url = next((i["#text"] for i in reversed(images) if i.get("#text")), None)
+            if url:
+                async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                    r = await client.get(url)
+                    if r.status_code == 200:
+                        image_bytes = r.content
+        except Exception as e:
+            log.debug("Last.fm cover fetch failed for %s - %s: %s", artist, title, e)
+
+    if not image_bytes:
+        return False
+
+    # Embed into file
+    try:
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext == ".flac":
+            from mutagen.flac import FLAC, Picture
+            audio = FLAC(file_path)
+            pic = Picture()
+            pic.type = 3  # front cover
+            pic.mime = image_mime
+            pic.data = image_bytes
+            audio.clear_pictures()
+            audio.add_picture(pic)
+            audio.save()
+        elif ext == ".mp3":
+            from mutagen.id3 import ID3, APIC, ID3NoHeaderError
+            try:
+                audio = ID3(file_path)
+            except ID3NoHeaderError:
+                audio = ID3()
+            audio.delall("APIC")
+            audio.add(APIC(encoding=3, mime=image_mime, type=3, desc="Cover", data=image_bytes))
+            audio.save(file_path)
+        elif ext in (".m4a", ".aac", ".mp4"):
+            from mutagen.mp4 import MP4, MP4Cover
+            audio = MP4(file_path)
+            fmt = MP4Cover.FORMAT_PNG if "png" in image_mime else MP4Cover.FORMAT_JPEG
+            audio["covr"] = [MP4Cover(image_bytes, imageformat=fmt)]
+            audio.save()
+        elif ext in (".ogg", ".opus"):
+            from mutagen.oggvorbis import OggVorbis
+            from mutagen.flac import Picture
+            import base64
+            audio = OggVorbis(file_path)
+            pic = Picture()
+            pic.type = 3
+            pic.mime = image_mime
+            pic.data = image_bytes
+            audio["metadata_block_picture"] = [base64.b64encode(pic.write()).decode("ascii")]
+            audio.save()
+        else:
+            return False
+        return True
+    except Exception as e:
+        log.warning("cover embed failed for %s: %s", file_path, e)
+        return False
+
+
 async def request_download(
     db: AsyncSession,
     item_type: str,
@@ -96,8 +255,57 @@ async def request_download(
     playlist_id: Optional[uuid.UUID] = None,
     mb_recording_id: Optional[str] = None,
     mb_artist_id: Optional[str] = None,
+    user_playlist_id: Optional[uuid.UUID] = None,
+    profile_id: Optional[uuid.UUID] = None,
 ) -> DownloadJob:
-    """Create a DownloadJob and kick off the parallel pipeline immediately."""
+    """Create a DownloadJob and kick off the parallel pipeline immediately.
+
+    Dedup: if a non-exhausted/failed job already exists for the same artist+title
+    (case-insensitive), return that job instead of creating a duplicate.
+
+    Title may be prefixed with 'mb:UUID' to inline the MusicBrainz recording ID:
+        title = "mb:f3a07d8f-... Song Title"   → extracts MBID, keeps "Song Title"
+        title = "mb:f3a07d8f-..."              → extracts MBID, title fetched from MB
+    """
+    # Parse inline mb:UUID prefix from title
+    m = _MB_PREFIX_RE.match(title)
+    if m and not mb_recording_id:
+        mb_recording_id = m.group(1)
+        title = title[m.end():].strip()  # remainder is optional title hint; may be ""
+        if not title:
+            title = f"[mb:{mb_recording_id[:8]}]"  # placeholder until MB resolution fills it in
+        log.debug("request_download: parsed inline mb_recording_id=%s, title=%r", mb_recording_id, title)
+
+    from sqlalchemy import func as _func, and_
+    existing = await db.execute(
+        select(DownloadJob).where(
+            and_(
+                _func.lower(DownloadJob.artist) == artist.strip().lower(),
+                _func.lower(DownloadJob.title) == title.strip().lower(),
+                DownloadJob.status.in_(["queued", "downloading", "completed"]),
+            )
+        ).limit(1)
+    )
+    dup = existing.scalars().first()
+    if dup:
+        if dup.status in ("queued", "downloading"):
+            log.info("request_download: dedup — %s - %s already in progress (%s)", artist, title, dup.status)
+            return dup
+        if dup.status == "completed" and dup.file_path and os.path.exists(dup.file_path):
+            log.info("request_download: dedup — %s - %s already downloaded", artist, title)
+            if profile_id and dup.file_path:
+                from ..core.config import get_settings as _gs
+                from ..models.library import Song as _Song
+                _music_dir = _gs().MUSIC_DIR
+                _rel = dup.file_path[len(_music_dir)+1:] if dup.file_path.startswith(_music_dir+"/") else dup.file_path
+                _sq = await db.execute(select(_Song).where(_Song.file_path == _rel))
+                _song = _sq.scalar_one_or_none()
+                if _song:
+                    _song.profile_id = profile_id
+                    _song.needs_profile_assignment = False
+                    log.info("request_download: dedup assigned profile %s → '%s - %s'", profile_id, artist, title)
+            return dup
+
     job = DownloadJob(
         item_type=item_type,
         artist=artist,
@@ -106,6 +314,8 @@ async def request_download(
         sources_tried=[],
         retry_count=0,
         playlist_id=playlist_id,
+        user_playlist_id=user_playlist_id,
+        profile_id=profile_id,
         mb_recording_id=mb_recording_id,
         mb_artist_id=mb_artist_id,
         candidates=[],
@@ -142,6 +352,11 @@ async def retry_job(job_id: uuid.UUID) -> None:
 
 async def _run_pipeline(job_id: uuid.UUID) -> None:
     """Parallel source search → score all candidates → download winner."""
+    async with _pipeline_sem():
+        await _run_pipeline_inner(job_id)
+
+
+async def _run_pipeline_inner(job_id: uuid.UUID) -> None:
     pipeline_log: list[dict] = []
 
     # ── Load job ─────────────────────────────────────────────────────────────
@@ -149,11 +364,38 @@ async def _run_pipeline(job_id: uuid.UUID) -> None:
         job = await db.get(DownloadJob, job_id)
         if not job or job.status not in ("queued",):
             return
+
+        # Deduplicate: if another completed job for same artist+title has a live file, reuse it
+        from sqlalchemy import and_
+        dup_result = await db.execute(
+            select(DownloadJob).where(
+                and_(
+                    DownloadJob.artist == job.artist,
+                    DownloadJob.title == job.title,
+                    DownloadJob.status == "completed",
+                    DownloadJob.file_path.isnot(None),
+                    DownloadJob.id != job.id,
+                )
+            )
+        )
+        dup = dup_result.scalars().first()
+        if dup and dup.file_path and os.path.exists(dup.file_path):
+            job.status = "completed"
+            job.file_path = dup.file_path
+            job.confidence_score = dup.confidence_score
+            job.quality_score = dup.quality_score
+            job.source_used = dup.source_used
+            job.pipeline_log = [{"step": "deduplicated", "ts": datetime.now(timezone.utc).isoformat(),
+                                  "status": "ok", "message": f"File already downloaded by job {dup.id}", "data": {}}]
+            log.info("pipeline: dedup %s - %s → reusing file from job %s", job.artist, job.title, dup.id)
+            return
+
         job.status = "downloading"
         ctx = types.SimpleNamespace(
             id=job.id,
             artist=job.artist,
             title=job.title,
+            search_title=_strip_version_suffix(job.title),  # used by sources for queries
             item_type=job.item_type,
             mb_recording_id=job.mb_recording_id,
             mb_artist_id=job.mb_artist_id,
@@ -197,19 +439,25 @@ async def _run_pipeline(job_id: uuid.UUID) -> None:
     source_log: dict[str, str] = {}
 
     async def _search_source(src) -> list[Candidate]:
+        timeout = _SOURCE_TIMEOUTS.get(src.NAME, _SOURCE_TIMEOUT_DEFAULT)
         try:
-            results = await asyncio.wait_for(src.search(ctx), timeout=_SOURCE_SEARCH_TIMEOUT)
+            # Soulseek manages its own search timing internally (90s polling loop +
+            # Semaphore(4) queue). Wrapping in wait_for cancels searches still waiting
+            # for a queue slot. Apply a generous safety cap instead of the tight timeout.
+            if src.NAME == "soulseek":
+                results = await asyncio.wait_for(src.search(ctx), timeout=600)
+            else:
+                results = await asyncio.wait_for(src.search(ctx), timeout=timeout)
             source_log[src.NAME] = f"{len(results)} candidates"
             return results
         except asyncio.TimeoutError:
-            err = f"search timed out after {_SOURCE_SEARCH_TIMEOUT}s"
-            source_log[src.NAME] = f"timeout: {err}"
-            log.warning("pipeline: %s timed out for %s - %s", src.NAME, ctx.artist, ctx.title)
+            actual_timeout = 600 if src.NAME == "soulseek" else timeout
+            source_log[src.NAME] = f"timeout after {actual_timeout}s"
+            log.warning("pipeline: %s timed out (%ds) for %s - %s", src.NAME, actual_timeout, ctx.artist, ctx.title)
             return []
         except Exception as e:
-            err = str(e)
-            source_log[src.NAME] = f"error: {err}"
-            log.warning("pipeline: %s search failed for %s - %s: %s", src.NAME, ctx.artist, ctx.title, err)
+            source_log[src.NAME] = f"error: {e}"
+            log.warning("pipeline: %s search failed for %s - %s: %s", src.NAME, ctx.artist, ctx.title, e)
             return []
 
     raw_results = await asyncio.gather(*[_search_source(s) for s in sources])
@@ -226,27 +474,29 @@ async def _run_pipeline(job_id: uuid.UUID) -> None:
         await _handle_failure(job_id, "No candidates from any source", pipeline_log)
         return
 
-    # ── Score all candidates ──────────────────────────────────────────────────
-    scored: list[tuple[ScoreBreakdown, Candidate]] = []
+    # ── Rank candidates by pre-download score (identity+quality+source, max 80) ─
+    scored: list[tuple[float, Candidate]] = []
+    scored_breakdowns: dict[int, dict] = {}  # index → scores dict for serialization
     for cand in all_candidates:
         try:
-            breakdown = score_candidate(cand, mb_recording or None)
-            scored.append((breakdown, cand))
+            pre_bd = score_predownload(cand, mb_recording or None)
+            scored.append((pre_bd.total, cand))
+            scored_breakdowns[id(cand)] = pre_bd.to_dict()
         except Exception as e:
-            log.warning("pipeline: scoring failed for candidate %s/%s: %s", cand.source, cand.title, e)
+            log.warning("pipeline: pre-scoring failed for %s/%s: %s", cand.source, cand.title, e)
 
-    scored.sort(key=lambda x: x[0].total, reverse=True)
+    scored.sort(key=lambda x: x[0], reverse=True)
 
     candidates_serialized = [
-        {**c.to_dict(), "scores": b.to_dict()}
-        for b, c in scored
+        {**c.to_dict(), "predownload_score": s, "scores": scored_breakdowns.get(id(c), {})}
+        for s, c in scored
     ]
     _log_step(pipeline_log, "candidates_scored", "ok",
-              f"Scored {len(scored)} candidates; best={scored[0][0].total:.1f} from {scored[0][1].source}",
+              f"Ranked {len(scored)} candidates; top={scored[0][0]:.1f} from {scored[0][1].source}",
               {"top_candidates": candidates_serialized[:10]})
     await _persist_candidates(job_id, pipeline_log, candidates_serialized)
 
-    # ── Download winner (try top-N) ───────────────────────────────────────────
+    # ── Download loop: try top-N, reject on quality gates, embed cover art ─────
     from ..core.config import get_settings
     settings = get_settings()
     dest_dir = settings.MUSIC_DIR
@@ -256,32 +506,133 @@ async def _run_pipeline(job_id: uuid.UUID) -> None:
     winner_candidate: Candidate | None = None
 
     source_map = {s.NAME: s for s in sources}
+    mb_release_id = mb_recording.get("release_mbid") if mb_recording else None
 
-    for breakdown, cand in scored[:_MAX_DOWNLOAD_ATTEMPTS]:
+    for pre_score, cand in scored[:_MAX_DOWNLOAD_ATTEMPTS]:
         src = source_map.get(cand.source)
         if not src:
             continue
+        file_path: str | None = None
         try:
             _log_step(pipeline_log, "download_attempt", "ok",
-                      f"Attempting download via {cand.source} (score={breakdown.total:.1f})",
+                      f"Attempting download via {cand.source} (pre_score={pre_score:.1f})",
                       {"source": cand.source, "format": cand.format, "bitrate": cand.bitrate})
             ok, file_path = await src.download(cand, dest_dir)
-            if ok:
-                downloaded_path = file_path
-                winner_breakdown = breakdown
-                winner_candidate = cand
-                # Prowlarr: persist qb_hash from download_ref
-                if cand.source == "prowlarr":
-                    qb_hash = (cand.download_ref or {}).get("qb_hash")
-                    if qb_hash:
-                        async with _db() as db:
-                            job = await db.get(DownloadJob, job_id)
-                            if job:
-                                job.qb_hash = qb_hash
-                _log_step(pipeline_log, "downloaded", "ok",
-                          f"Downloaded via {cand.source}",
-                          {"file_path": downloaded_path, "source": cand.source})
-                break
+            if not ok:
+                _log_step(pipeline_log, "download_attempt", "warn",
+                          f"{cand.source} returned ok=False", {"source": cand.source})
+                continue
+
+            # Prowlarr: persist qb_hash
+            if cand.source == "prowlarr":
+                qb_hash = (cand.download_ref or {}).get("qb_hash")
+                if qb_hash:
+                    async with _db() as db:
+                        job = await db.get(DownloadJob, job_id)
+                        if job:
+                            job.qb_hash = qb_hash
+
+            # Cover art: fetch and embed if missing, before reading tags
+            if not cand.has_cover_art and file_path:
+                try:
+                    embedded = await _fetch_and_embed_cover(
+                        file_path, ctx.artist, ctx.title, cand.album, mb_release_id
+                    )
+                    if embedded:
+                        cand.has_cover_art = True
+                        _log_step(pipeline_log, "cover_embedded", "ok",
+                                  f"Cover art fetched and embedded for {cand.source}",
+                                  {"source": cand.source})
+                    else:
+                        _log_step(pipeline_log, "cover_embedded", "warn",
+                                  f"No cover art found for {cand.source} — CAA and Last.fm returned nothing",
+                                  {"source": cand.source})
+                except Exception as e:
+                    _log_step(pipeline_log, "cover_embedded", "error",
+                              f"Cover embed error: {e}", {"source": cand.source})
+
+            # Read actual file tags
+            tags = await _read_file_tags(file_path) if file_path else {}
+            if tags:
+                cand.metadata.update(tags)
+                if tags.get("has_cover_art"):
+                    cand.has_cover_art = True
+
+            # Full rescore with real tags
+            final_score = score_candidate(cand, mb_recording or None)
+            _log_step(pipeline_log, "rescore", "ok",
+                      f"Rescored {cand.source}: {final_score.total:.1f}/100",
+                      {"scores": final_score.to_dict(), "tags_found": bool(tags)})
+
+            # AcoustID fingerprint fallback: if identity weak, verify via audio fingerprint
+            if final_score.identity < 15 and settings.ACOUSTID_API_KEY and file_path:
+                from .fingerprint_svc import identify_recording as _acoustid_identify
+                confirmed, fp_confidence = await _acoustid_identify(
+                    file_path, ctx.mb_recording_id, settings.ACOUSTID_API_KEY
+                )
+                if confirmed:
+                    final_score = ScoreBreakdown(
+                        identity=35.0,
+                        quality=final_score.quality,
+                        source=final_score.source,
+                        metadata=final_score.metadata,
+                        cover_art=final_score.cover_art,
+                    )
+                    _log_step(pipeline_log, "acoustid_confirmed", "ok",
+                              f"AcoustID confirmed recording (confidence={fp_confidence:.2f})",
+                              {"fp_confidence": fp_confidence, "mb_id": ctx.mb_recording_id})
+                else:
+                    _log_step(pipeline_log, "acoustid_checked", "warn",
+                              f"AcoustID: no match for expected recording (best={fp_confidence:.2f})",
+                              {"fp_confidence": fp_confidence})
+
+            # Identity gate
+            acceptable, reason = is_acceptable(final_score)
+            if not acceptable:
+                _log_step(pipeline_log, "candidate_rejected", "warn",
+                          f"Rejected {cand.source}: {reason} — trying next candidate",
+                          {"source": cand.source, "reason": reason, "scores": final_score.to_dict()})
+                log.info("pipeline: rejected %s for %s - %s: %s",
+                         cand.source, ctx.artist, ctx.title, reason)
+                if file_path and os.path.exists(file_path):
+                    try:
+                        # Don't delete if another completed job owns this file path
+                        async with _db() as check_db:
+                            owned = await check_db.execute(
+                                select(DownloadJob.id).where(
+                                    DownloadJob.file_path == file_path,
+                                    DownloadJob.status == "completed",
+                                )
+                            )
+                        if owned.scalar():
+                            log.warning("pipeline: rejected file %s owned by another job — skipping deletion", file_path)
+                        else:
+                            os.remove(file_path)
+                    except OSError as e:
+                        log.warning("pipeline: could not delete rejected file %s: %s", file_path, e)
+                continue
+
+            # Accepted — write MB metadata into file tags
+            downloaded_path = file_path
+            winner_breakdown = final_score
+            winner_candidate = cand
+            # Always write at least job artist/title; MB data overrides if available
+            fallback_rec = {
+                "title": mb_recording.get("title") or ctx.title,
+                "artist_name": mb_recording.get("artist_name") or ctx.artist,
+                "release_title": mb_recording.get("release_title"),
+                "isrc": mb_recording.get("isrc"),
+                "recording_id": mb_recording.get("recording_id"),
+            }
+            wrote = await _write_mb_tags(downloaded_path, fallback_rec)
+            _log_step(pipeline_log, "mb_tags_written", "ok" if wrote else "warn",
+                      "metadata written to file" if wrote else "tag write skipped or failed",
+                      {"wrote": wrote, "had_mb": bool(mb_recording)})
+            _log_step(pipeline_log, "downloaded", "ok",
+                      f"Accepted download via {cand.source} (score={final_score.total:.1f})",
+                      {"file_path": downloaded_path, "source": cand.source, "scores": final_score.to_dict()})
+            break
+
         except Exception as e:
             err = str(e)
             _log_step(pipeline_log, "download_attempt", "error",
@@ -289,30 +640,42 @@ async def _run_pipeline(job_id: uuid.UUID) -> None:
                       {"source": cand.source, "error": err})
             log.warning("pipeline: download failed via %s for %s - %s: %s",
                         cand.source, ctx.artist, ctx.title, err)
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
 
     if winner_candidate is None:
         _log_step(pipeline_log, "download_failed", "error",
-                  f"All {min(_MAX_DOWNLOAD_ATTEMPTS, len(scored))} download attempts failed")
+                  f"All {min(_MAX_DOWNLOAD_ATTEMPTS, len(scored))} candidates failed quality gate or download")
         await _handle_failure(job_id, "All download attempts failed", pipeline_log)
         return
 
-    # ── Post-download: re-score with actual file tags ─────────────────────────
-    if downloaded_path:
-        tags = await _read_file_tags(downloaded_path)
-        if tags:
-            winner_candidate.metadata.update(tags)
-            if tags.get("has_cover_art"):
-                winner_candidate.has_cover_art = True
-            try:
-                winner_breakdown = score_candidate(winner_candidate, mb_recording or None)
-                _log_step(pipeline_log, "rescore", "ok",
-                          f"Rescored after tag read: {winner_breakdown.total:.1f}",
-                          {"tags": tags, "scores": winner_breakdown.to_dict()})
-            except Exception as e:
-                _log_step(pipeline_log, "rescore", "error", f"Rescore failed: {e}")
-        else:
-            _log_step(pipeline_log, "rescore", "warn",
-                      "No tags readable from file — using pre-download scores")
+    # ── Prowlarr: torrent queued in qBit — leave as "downloading", poller handles completion ──
+    if winner_candidate.source == "prowlarr":
+        qb_hash = (winner_candidate.download_ref or {}).get("qb_hash")
+        _log_step(pipeline_log, "queued_qb", "ok",
+                  f"Prowlarr: torrent queued in qBittorrent (hash={str(qb_hash or '')[:8]}), awaiting download",
+                  {"qb_hash": qb_hash})
+        async with _db() as db:
+            job = await db.get(DownloadJob, job_id)
+            if job:
+                job.pipeline_log = pipeline_log
+                job.candidates = candidates_serialized
+                job.selected_candidate = {**winner_candidate.to_dict(), "scores": winner_breakdown.to_dict()}
+                job.confidence_score = winner_breakdown.total
+                job.quality_score = winner_breakdown.quality
+                if ctx.mb_recording_id:
+                    job.mb_recording_id = ctx.mb_recording_id
+                if mb_recording.get("artist_mbid"):
+                    job.mb_artist_id = mb_recording["artist_mbid"]
+                if mb_recording.get("release_mbid"):
+                    job.mb_release_id = mb_recording["release_mbid"]
+                # status stays "downloading" — poller sets "completed" + file_path when torrent finishes
+        log.info("pipeline: %s - %s queued in qBittorrent (hash=%s), awaiting completion",
+                 ctx.artist, ctx.title, str(qb_hash or "?")[:8])
+        return
 
     # ── Determine review status + create notification ─────────────────────────
     r_status = review_status_for(winner_breakdown)
@@ -501,10 +864,62 @@ async def _post_download_hook(job_id: uuid.UUID) -> None:
         from .navidrome import trigger_scan
         from .essentia_svc import analyse_pending_songs
         from ..jobs.library_sync import run_library_sync
+        from ..models.library import Song
+        from .musicbrainz import get_recording
         await trigger_scan()
-        # Give Navidrome a moment to finish indexing before we pull from it
-        await asyncio.sleep(5)
+        # Give Navidrome time to finish indexing before we pull from it
+        await asyncio.sleep(10)
         await run_library_sync()
         await analyse_pending_songs()
+
+        async with _db() as db:
+            from ..core.config import get_settings as _get_settings
+            music_dir = _get_settings().MUSIC_DIR
+            job = await db.get(DownloadJob, job_id)
+            if not job or not job.file_path:
+                return
+
+            # Songs.file_path is Navidrome-relative; DownloadJob.file_path is absolute
+            rel_path = job.file_path
+            if rel_path.startswith(music_dir + "/"):
+                rel_path = rel_path[len(music_dir) + 1:]
+            song_q = await db.execute(select(Song).where(Song.file_path == rel_path))
+            song = song_q.scalar_one_or_none()
+
+            # Write MB-sourced romanized title if available
+            if song and job.mb_recording_id:
+                try:
+                    mb_rec = await get_recording(job.mb_recording_id)
+                    rom = mb_rec.get("title_romanized")
+                    if rom:
+                        song.title_romanized = rom
+                        log.info("Set title_romanized=%r for '%s' from MB aliases", rom, song.title)
+                except Exception as e:
+                    log.warning("post-download hook: MB romanized lookup failed: %s", e)
+
+            # Assign to profile
+            if song and job.profile_id:
+                song.profile_id = job.profile_id
+                song.needs_profile_assignment = False
+
+            # Auto-add to UserPlaylist when job was created with a user_playlist_id
+            if song and job.user_playlist_id:
+                from ..models.playlists import UserPlaylist as _UPL
+                from sqlalchemy.orm import flag_modified as _fm
+                upl = await db.get(_UPL, job.user_playlist_id)
+                if upl is not None:
+                    songs_list = list(upl.songs or [])
+                    if str(song.id) not in {s.get("id") for s in songs_list}:
+                        artist_name = song.display_artist or job.artist
+                        songs_list.append({
+                            "id": str(song.id),
+                            "navidrome_id": song.navidrome_id or "",
+                            "title": song.title,
+                            "artist": artist_name,
+                            "duration_sec": song.duration_sec or 0,
+                        })
+                        upl.songs = songs_list
+                        _fm(upl, "songs")
+                        log.info("playlist '%s': added '%s - %s'", upl.name, artist_name, song.title)
     except Exception:
         log.exception("post-download hook failed for job %s", job_id)

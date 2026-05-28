@@ -100,8 +100,10 @@ services:
       - SLSKD_API_KEY=${SLSKD_API_KEY:-}
       - QOBUZ_EMAIL=${QOBUZ_EMAIL:-}
       - QOBUZ_PASSWORD=${QOBUZ_PASSWORD:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?required}
-      - LLM_PROVIDER=${LLM_PROVIDER:-claude}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - LLM_PROVIDER=${LLM_PROVIDER:-deepseek}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
       - LASTFM_API_KEY=${LASTFM_API_KEY:-}
       - LASTFM_API_SECRET=${LASTFM_API_SECRET:-}
       - LISTENBRAINZ_TOKEN=${LISTENBRAINZ_TOKEN:-}
@@ -135,7 +137,7 @@ volumes:
     driver_opts:
       type: nfs
       o: "addr=10.1.8.16,nfsvers=4,rw,soft,timeo=30"
-      device: ":/volume2/aniapp"
+      device: ":/volume2/streaming/musicapp"
 
   navidrome_data:
     driver: local

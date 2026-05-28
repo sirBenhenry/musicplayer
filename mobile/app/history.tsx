@@ -3,6 +3,7 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../hooks/useTheme';
+import { Icon } from '../components/shared/Icon';
 import { getHistory } from '../lib/api';
 import { font } from '../lib/tokens';
 
@@ -27,7 +28,7 @@ export default function HistoryScreen() {
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
-          <Text style={[styles.back, { color: theme.fgStrong }]}>←</Text>
+          <Icon name="arrowLeft" color={theme.fgStrong} size={22} />
         </TouchableOpacity>
         <Text style={[styles.heading, { color: theme.fgStrong }]}>History</Text>
       </View>

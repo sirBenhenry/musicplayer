@@ -27,8 +27,11 @@ def start_scheduler(settings) -> None:
     scheduler.add_job(poll_completed_downloads, "interval", minutes=2, id="dl_poller")
 
     # Retry failed downloads every 15 min
-    from ..jobs.download_retry import retry_failed_downloads
+    from ..jobs.download_retry import retry_failed_downloads, upgrade_bad_quality_downloads
     scheduler.add_job(retry_failed_downloads, "interval", minutes=15, id="dl_retry")
+
+    # Daily quality upgrade at 03:00
+    scheduler.add_job(upgrade_bad_quality_downloads, _cron("0 3 * * *"), id="quality_upgrade")
 
     scheduler.start()
 

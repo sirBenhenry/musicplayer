@@ -44,9 +44,11 @@ class Settings(BaseSettings):
 
     # LLM
     ANTHROPIC_API_KEY: str = ""
-    LLM_PROVIDER: str = "claude"  # claude | ollama
+    LLM_PROVIDER: str = "deepseek"  # claude | ollama | deepseek
     OLLAMA_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3.1:70b"
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_MODEL: str = "deepseek-chat"
 
     # Soulseek via slskd
     SLSKD_URL: str = "http://slskd:5030"
@@ -56,6 +58,9 @@ class Settings(BaseSettings):
     QOBUZ_EMAIL: str = ""
     QOBUZ_PASSWORD: str = ""
     STREAMRIP_CONFIG_DIR: str = "/app/.streamrip"
+
+    # AcoustID audio fingerprinting (identity fallback for non-Latin titles)
+    ACOUSTID_API_KEY: str = ""  # Register free at acoustid.org
 
     # Music discovery APIs
     LASTFM_API_KEY: str = ""

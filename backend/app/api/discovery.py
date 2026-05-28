@@ -31,6 +31,20 @@ async def get_today(
     return [_serialize(p) for p in playlists]
 
 
+@router.get("/playlists")
+async def list_playlists(
+    profile_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(require_auth),
+):
+    q = select(DailyPlaylist).order_by(DailyPlaylist.date.desc(), DailyPlaylist.slot)
+    if profile_id:
+        q = q.where(DailyPlaylist.profile_id == profile_id)
+    result = await db.execute(q)
+    playlists = result.scalars().all()
+    return [_serialize_summary(p) for p in playlists]
+
+
 @router.get("/playlists/{playlist_id}")
 async def get_playlist(
     playlist_id: str,
@@ -81,6 +95,20 @@ def _serialize(p: DailyPlaylist) -> dict:
         "slot": p.slot,
         "date": str(p.date),
         "songs": p.songs or [],
+        "paused_to_tomorrow": p.paused_to_tomorrow,
+        "generated_at": p.generated_at.isoformat() if p.generated_at else None,
+    }
+
+
+def _serialize_summary(p: DailyPlaylist) -> dict:
+    songs = p.songs or []
+    song_count = len(songs) if isinstance(songs, list) else 0
+    return {
+        "id": str(p.id),
+        "profile_id": str(p.profile_id),
+        "slot": p.slot,
+        "date": str(p.date),
+        "song_count": song_count,
         "paused_to_tomorrow": p.paused_to_tomorrow,
         "generated_at": p.generated_at.isoformat() if p.generated_at else None,
     }

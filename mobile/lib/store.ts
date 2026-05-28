@@ -54,6 +54,17 @@ interface AppStore {
   queueIndex: number;
   setQueue: (songs: Song[], index?: number) => void;
   appendToQueue: (song: Song) => void;
+  explicitQueue: Song[];
+  setExplicitQueue: (songs: Song[]) => void;
+
+  // Auto-radio pre-queue
+  autoQueue: Song[];
+  setAutoQueue: (songs: Song[]) => void;
+  // Short-ban: song IDs removed from queue — excluded for 30 min, session-only
+  // Record<songId, expiresAtMs>
+  shortBans: Record<string, number>;
+  addShortBan: (id: string) => void;
+  getActiveBanIds: () => string[];
 
   // Theme
   isDark: boolean;
@@ -64,6 +75,12 @@ interface AppStore {
   // UI overlays
   profileMenuOpen: boolean;
   setProfileMenuOpen: (v: boolean) => void;
+  queueOpen: boolean;
+  setQueueOpen: (v: boolean) => void;
+
+  // Notification badge
+  notificationCount: number;
+  setNotificationCount: (n: number) => void;
 
   // Hydration
   hydrate: () => Promise<void>;
@@ -110,6 +127,23 @@ export const useStore = create<AppStore>((set, get) => ({
   queueIndex: 0,
   setQueue: (songs, index = 0) => set({ queue: songs, queueIndex: index }),
   appendToQueue: (song) => set((s) => ({ queue: [...s.queue, song] })),
+  explicitQueue: [],
+  setExplicitQueue: (songs) => set({ explicitQueue: songs }),
+
+  autoQueue: [],
+  setAutoQueue: (songs) => set({ autoQueue: songs }),
+
+  shortBans: {},
+  addShortBan: (id) => set((s) => ({
+    shortBans: { ...s.shortBans, [id]: Date.now() + 30 * 60 * 1000 },
+  })),
+  getActiveBanIds: () => {
+    const { shortBans } = get();
+    const now = Date.now();
+    return Object.entries(shortBans)
+      .filter(([, exp]) => exp > now)
+      .map(([id]) => id);
+  },
 
   isDark: false,
   isSage: false,
@@ -126,6 +160,11 @@ export const useStore = create<AppStore>((set, get) => ({
 
   profileMenuOpen: false,
   setProfileMenuOpen: (v) => set({ profileMenuOpen: v }),
+  queueOpen: false,
+  setQueueOpen: (v) => set({ queueOpen: v }),
+
+  notificationCount: 0,
+  setNotificationCount: (n) => set({ notificationCount: n }),
 
   hydrate: async () => {
     const [auth, profileId, isDark, isSage] = await Promise.all([

@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useStore } from '../../lib/store';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
+import { Icon } from '../../components/shared/Icon';
 import { SongRow } from '../../components/shared/SongRow';
 import { getPlaylist, pausePlaylist, getStreamUrl } from '../../lib/api';
-import { playSong } from '../../lib/audio';
+import { playSong, addToQueue } from '../../lib/audio';
 import { font, radius } from '../../lib/tokens';
 
 const SLOT_LABELS: Record<string, string> = {
@@ -37,14 +39,14 @@ export default function PlaylistScreen() {
     setPaused(true);
   };
 
-  const songs: any[] = (playlist?.songs ?? []).filter((s: any) => !s._genre && !s._artist_of_day);
+  const songs: any[] = (playlist?.songs ?? []).filter((s: any) => !s._genre && !s._artist_of_day && s.navidrome_id);
   const slotLabel = SLOT_LABELS[playlist?.slot] ?? 'Playlist';
 
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
-          <Text style={[styles.back, { color: theme.fgStrong }]}>←</Text>
+          <Icon name="arrowLeft" color={theme.fgStrong} size={22} />
         </TouchableOpacity>
         <View style={styles.titleBlock}>
           <Text style={[styles.slot, { color: theme.fgMuted, fontFamily: font.mono }]}>
@@ -80,9 +82,17 @@ export default function PlaylistScreen() {
           <SongRow
             song={{ ...item, artist: item.artist ?? '' }}
             index={index}
+            onSwipeQueue={() => addToQueue({ ...item, artist: item.artist ?? '', duration_sec: item.duration_sec ?? 0 })}
             onPress={() => {
-              if (!item.navidrome_id) return;
               const url = getStreamUrl(item.navidrome_id);
+              useStore.getState().setQueue(
+                songs.map((s) => ({
+                  ...s,
+                  artist: s.artist ?? '',
+                  duration_sec: s.duration_sec ?? 0,
+                })),
+                index,
+              );
               playSong({ ...item, artist: item.artist ?? '', duration_sec: item.duration_sec ?? 0 }, url, id);
             }}
             hideArtist={false}

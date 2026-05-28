@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.core.scheduler import start_scheduler, stop_scheduler
-from app.api import auth, library, profiles, playback, deletion, discovery, history, queue, webhooks, admin, downloads
+from app.api import auth, library, profiles, playback, deletion, discovery, history, queue, webhooks, admin, downloads, notifications, playlists
 from app.api.library import stream_router
 from app.models.profile import Profile
 
@@ -30,6 +30,30 @@ async def lifespan(app: FastAPI):
                 log.info("Created default profile 'My Music'")
     except Exception as e:
         log.warning("Could not auto-create default profile: %s", e)
+
+    # Reset any jobs stuck in 'downloading' from a previous run — their asyncio tasks are gone
+    try:
+        from datetime import datetime, timezone, timedelta
+        from sqlalchemy import update
+        from app.models.events import DownloadJob
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                update(DownloadJob)
+                .where(DownloadJob.status.in_(["downloading", "queued"]))
+                .values(
+                    status="failed",
+                    last_error="interrupted by container restart",
+                    next_retry_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+                )
+                .returning(DownloadJob.id)
+            )
+            reset_count = len(result.fetchall())
+            await db.commit()
+            if reset_count:
+                log.info("Startup: reset %d interrupted download jobs to failed", reset_count)
+    except Exception as e:
+        log.warning("Could not reset interrupted downloads on startup: %s", e)
+
     start_scheduler(settings)
     yield
     stop_scheduler()
@@ -57,6 +81,8 @@ app.include_router(queue.router, prefix="/api/v1")
 app.include_router(webhooks.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(downloads.router, prefix="/api/v1")
+app.include_router(notifications.router, prefix="/api/v1")
+app.include_router(playlists.router, prefix="/api/v1")
 
 
 @app.get("/health")

@@ -1,17 +1,32 @@
 """slskd (Soulseek) REST API source adapter."""
 import asyncio
 import logging
+import os
 
 import httpx
 
 from ...core.config import get_settings
+from .base import Candidate
 
 log = logging.getLogger(__name__)
 NAME = "soulseek"
 
-_SEARCH_TIMEOUT = 45   # seconds to wait for search results
-_DL_TIMEOUT = 300      # seconds to wait for download completion
+_SEARCH_TIMEOUT = 90      # poll for up to 90s — slskd needs time to collect peers
+_DL_TIMEOUT = 300
 _POLL_INTERVAL = 5
+_EARLY_EXIT_FILES = 15   # stop polling early once we have this many valid candidates
+_AUDIO_EXTS = frozenset([".flac", ".mp3", ".m4a", ".aac", ".opus", ".ogg", ".wav"])
+_TERMINAL_SEARCH_STATES = frozenset(["Completed", "Cancelled", "TimedOut", "Errored"])
+
+# Hard cap on concurrent slskd searches — prevents queue buildup that locks the client
+_SLSK_SEARCH_SEM: asyncio.Semaphore | None = None
+
+
+def _search_sem() -> asyncio.Semaphore:
+    global _SLSK_SEARCH_SEM
+    if _SLSK_SEARCH_SEM is None:
+        _SLSK_SEARCH_SEM = asyncio.Semaphore(4)
+    return _SLSK_SEARCH_SEM
 
 
 def _headers():
@@ -22,59 +37,139 @@ def _base():
     return get_settings().SLSKD_URL.rstrip("/")
 
 
-def _quality_rank(filename: str, size: int) -> tuple:
+async def _check_alive() -> bool:
+    """Return True if slskd API is reachable (uses GET /api/v1/searches as a ping)."""
+    try:
+        async with httpx.AsyncClient(timeout=5, headers=_headers()) as client:
+            r = await client.get(f"{_base()}/api/v1/searches")
+            if r.status_code == 200:
+                return True
+            log.warning("soulseek: liveness check got %d", r.status_code)
+            return False
+    except Exception as e:
+        log.warning("soulseek: liveness check failed: %s", e)
+        return False
+
+
+def _parse_format(filename: str) -> tuple[str, int | None]:
     fn = filename.lower()
     if fn.endswith(".flac"):
-        return (4, size)
-    if "320" in fn or fn.endswith(".mp3"):
-        return (2, size)
+        return "FLAC", None
+    if "320" in fn:
+        return "MP3", 320
+    if "256" in fn:
+        return "MP3", 256
+    if "192" in fn:
+        return "MP3", 192
+    if fn.endswith(".mp3"):
+        return "MP3", None
     if fn.endswith(".m4a") or fn.endswith(".aac"):
-        return (1, size)
-    return (0, size)
+        return "AAC", None
+    if fn.endswith(".ogg"):
+        return "OGG", None
+    if fn.endswith(".opus"):
+        return "OPUS", None
+    return "UNKNOWN", None
 
 
-async def download(job) -> bool:
+async def search(job) -> list[Candidate]:
     settings = get_settings()
     if not settings.SLSKD_URL or not settings.SLSKD_API_KEY:
         raise RuntimeError("slskd not configured (SLSKD_URL/SLSKD_API_KEY missing)")
 
-    query = f"{job.artist} {job.title}"
-    async with httpx.AsyncClient(timeout=15, headers=_headers()) as client:
-        r = await client.post(f"{_base()}/api/v1/searches", json={"searchText": query})
-        r.raise_for_status()
-        search_id = r.json()["id"]
+    # Liveness pre-check — fail fast if slskd API is unreachable
+    if not await _check_alive():
+        raise RuntimeError("slskd API unreachable")
 
-    # Poll for results — must use ?includeResponses=true to get files
-    results = []
-    for _ in range(_SEARCH_TIMEOUT // _POLL_INTERVAL):
-        await asyncio.sleep(_POLL_INTERVAL)
+    query = f"{job.artist} {getattr(job, 'search_title', job.title)}"
+
+    async with _search_sem():
         async with httpx.AsyncClient(timeout=15, headers=_headers()) as client:
-            r = await client.get(f"{_base()}/api/v1/searches/{search_id}?includeResponses=true")
-            data = r.json()
-        state = data.get("state", "")
-        if "Completed" in state or "Cancelled" in state:
-            results = data.get("responses", [])
-            break
+            r = await client.post(f"{_base()}/api/v1/searches", json={"searchText": query})
+            r.raise_for_status()
+            search_id = r.json()["id"]
 
-    # Flatten files from all users, pick best
-    candidates = []
-    for resp in results:
+        responses: list[dict] = []
+        valid_file_count = 0
+        consecutive_errors = 0
+        for poll in range(_SEARCH_TIMEOUT // _POLL_INTERVAL):
+            await asyncio.sleep(_POLL_INTERVAL)
+            try:
+                async with httpx.AsyncClient(timeout=15, headers=_headers()) as client:
+                    r = await client.get(
+                        f"{_base()}/api/v1/searches/{search_id}?includeResponses=true"
+                    )
+                if r.status_code != 200:
+                    log.debug("soulseek: poll %d got status %d — skipping", poll, r.status_code)
+                    consecutive_errors += 1
+                    if consecutive_errors >= 3:
+                        log.warning("soulseek: 3 consecutive poll errors, aborting search")
+                        break
+                    continue
+                data = r.json()
+                consecutive_errors = 0
+            except Exception as e:
+                log.debug("soulseek: poll %d error (continuing): %s", poll, e)
+                consecutive_errors += 1
+                if consecutive_errors >= 3:
+                    log.warning("soulseek: 3 consecutive poll errors, aborting search")
+                    break
+                continue
+
+            state = data.get("state", "")
+            responses = data.get("responses", [])
+            valid_file_count = sum(
+                1 for resp in responses for f in resp.get("files", [])
+                if f.get("size", 0) >= 2_000_000
+                and os.path.splitext(f.get("filename", "").lower())[1] in _AUDIO_EXTS
+            )
+            finished = any(s in state for s in _TERMINAL_SEARCH_STATES)
+            if finished or (valid_file_count >= _EARLY_EXIT_FILES and poll >= 2):
+                break
+
+        # Clean up search slot immediately — prevents slskd queue buildup
+        try:
+            async with httpx.AsyncClient(timeout=5, headers=_headers()) as client:
+                await client.delete(f"{_base()}/api/v1/searches/{search_id}")
+        except Exception:
+            pass
+
+    candidates: list[Candidate] = []
+    for resp in responses:
         username = resp.get("username", "")
         for f in resp.get("files", []):
             fname = f.get("filename", "")
             size = f.get("size", 0)
-            if size < 2_000_000:
+            ext = os.path.splitext(fname.lower())[1]
+            if size < 2_000_000 or ext not in _AUDIO_EXTS:
                 continue
-            candidates.append((username, fname, size))
+            fmt, bitrate = _parse_format(fname)
+            candidates.append(Candidate(
+                source=NAME,
+                title=job.title,
+                artist=job.artist,
+                album=None,
+                format=fmt,
+                bitrate=bitrate,
+                file_size=size,
+                has_cover_art=False,
+                metadata={},
+                download_ref={"username": username, "filename": fname, "size": size},
+            ))
 
-    if not candidates:
-        raise RuntimeError(f"no Soulseek results for '{query}'")
+    log.info("soulseek: %d candidates for %s - %s", len(candidates), job.artist, job.title)
+    return candidates
 
-    candidates.sort(key=lambda c: _quality_rank(c[1], c[2]), reverse=True)
-    username, filename, size = candidates[0]
-    log.info("soulseek: best match user=%s file=%s size=%d", username, filename.split("\\")[-1], size)
 
-    # Request download — API expects an array
+async def download(candidate: Candidate, dest_dir: str) -> tuple[bool, str | None]:
+    ref = candidate.download_ref or {}
+    username = ref.get("username", "")
+    filename = ref.get("filename", "")
+    size = ref.get("size", 0)
+
+    if not username or not filename:
+        raise RuntimeError("soulseek candidate missing username/filename")
+
     async with httpx.AsyncClient(timeout=15, headers=_headers()) as client:
         r = await client.post(
             f"{_base()}/api/v1/transfers/downloads/{username}",
@@ -82,7 +177,7 @@ async def download(job) -> bool:
         )
         r.raise_for_status()
 
-    # Poll transfer status — response is nested: {username, directories:[{files:[{state,...}]}]}
+    file_path: str | None = None
     for _ in range(_DL_TIMEOUT // _POLL_INTERVAL):
         await asyncio.sleep(_POLL_INTERVAL)
         async with httpx.AsyncClient(timeout=15, headers=_headers()) as client:
@@ -94,9 +189,12 @@ async def download(job) -> bool:
                 if t.get("filename") == filename:
                     state = t.get("state", "")
                     if "Completed" in state:
-                        log.info("soulseek: downloaded %s - %s", job.artist, job.title)
-                        return True
+                        # slskd downloads into a local path we can derive
+                        local_name = os.path.basename(filename.replace("\\", "/"))
+                        file_path = os.path.join(dest_dir, local_name)
+                        log.info("soulseek: downloaded %s - %s", candidate.artist, candidate.title)
+                        return True, file_path
                     if "Failed" in state or "Cancelled" in state:
                         raise RuntimeError(f"Soulseek transfer failed: {state}")
 
-    raise RuntimeError(f"Soulseek download timed out for '{job.artist} - {job.title}'")
+    raise RuntimeError(f"Soulseek download timed out for '{candidate.artist} - {candidate.title}'")
