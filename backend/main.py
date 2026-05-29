@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -55,6 +56,14 @@ async def lifespan(app: FastAPI):
         log.warning("Could not reset interrupted downloads on startup: %s", e)
 
     start_scheduler(settings)
+
+    # Auto-resume any pending Essentia analysis after restart
+    try:
+        from app.services.essentia_svc import analyse_all_songs
+        asyncio.create_task(analyse_all_songs())
+    except Exception as e:
+        log.warning("Could not start background analysis task: %s", e)
+
     yield
     stop_scheduler()
 
