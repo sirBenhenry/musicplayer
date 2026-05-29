@@ -4,12 +4,47 @@ Runs as: python -m app.services._essentia_worker <file_path>
 Prints JSON feature vector to stdout on success; exits 1 on failure.
 Isolation: if Essentia's C code calls exit(0/1) or segfaults, only this
 subprocess dies — the parent uvicorn process is unaffected.
+
+Fallback: if the native codec fails, convert to WAV via ffmpeg and retry.
+The original file is never modified — temp WAV is deleted after extraction.
 """
 import json
+import os
+import subprocess
 import sys
+import tempfile
 
 
-def _extract(file_path: str):
+def _convert_to_wav(src_path: str) -> str | None:
+    """Convert audio to mono 44100Hz WAV for Essentia. Returns temp path or None."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", dir="/tmp", delete=False)
+    tmp.close()
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", src_path,
+                "-ar", "44100", "-ac", "1",
+                "-f", "wav", tmp.name,
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            err = result.stderr.decode(errors="replace")[-300:]
+            print(f"ffmpeg conversion failed: {err}", file=sys.stderr)
+            os.unlink(tmp.name)
+            return None
+        return tmp.name
+    except Exception as e:
+        print(f"ffmpeg error: {e}", file=sys.stderr)
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        return None
+
+
+def _do_extract(file_path: str) -> list:
     import numpy as np
     import essentia.standard as es
 
@@ -93,6 +128,25 @@ def _extract(file_path: str):
         features = list(features[:128])
 
     return features
+
+
+def _extract(file_path: str) -> list:
+    """Extract features with WAV fallback for unsupported codecs."""
+    try:
+        return _do_extract(file_path)
+    except Exception as native_err:
+        print(f"Native load failed ({native_err}), trying ffmpeg WAV conversion...",
+              file=sys.stderr)
+        wav_path = _convert_to_wav(file_path)
+        if wav_path is None:
+            raise RuntimeError(f"ffmpeg conversion failed; original error: {native_err}")
+        try:
+            return _do_extract(wav_path)
+        finally:
+            try:
+                os.unlink(wav_path)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
