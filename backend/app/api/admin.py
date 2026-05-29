@@ -236,6 +236,13 @@ async def trigger_analyse_all(db: AsyncSession = Depends(get_db), _: str = Depen
     return {"status": "full re-analysis queued for all songs"}
 
 
+@router.post("/analyse-resume")
+async def trigger_analyse_resume(_: str = Depends(require_auth)):
+    """Resume analysis for songs with no vector (analysed_at IS NULL). No wipe."""
+    asyncio.create_task(analyse_all_songs())
+    return {"status": "resume analysis queued"}
+
+
 @router.post("/retry-downloads")
 async def trigger_retry_downloads(_: str = Depends(require_auth)):
     asyncio.create_task(retry_failed_downloads())

@@ -136,7 +136,7 @@ async def auto_radio_batch(
     """
     count = max(1, min(count, 10))
     banned = set((banned_ids or "").split(",")) - {""}
-    already_picked: set[str] = set()
+    already_picked: set[str] = {song_id}  # exclude original seed from later chain positions
 
     chain: list[dict] = []
     current_id = song_id
@@ -308,20 +308,24 @@ async def _query_by_vector(
     import uuid as _uuid
 
     excl_list = list(excluded_ids) if excluded_ids else ["00000000-0000-0000-0000-000000000000"]
+    import numpy as _np
+    vec_list = vec.tolist() if isinstance(vec, _np.ndarray) else list(vec)
+    # asyncpg needs pgvector string format; cast in SQL
+    vec_str = '[' + ','.join(str(float(x)) for x in vec_list) + ']'
 
     base_q = """
         SELECT
             s.id::text, s.navidrome_id, s.title,
             s.artist_id::text, s.album_id::text, s.duration_sec,
             s.display_artist, a.name AS artist_name,
-            s.feature_vector <=> :vec AS _dist
+            s.feature_vector <=> CAST(:vec AS vector) AS _dist
         FROM songs s
         LEFT JOIN artists a ON a.id = s.artist_id
         WHERE s.id::text != ALL(:excluded)
           AND s.analysed_at IS NOT NULL
           AND s.feature_vector IS NOT NULL
     """
-    params: dict[str, Any] = {"vec": vec, "excluded": excl_list}
+    params: dict[str, Any] = {"vec": vec_str, "excluded": excl_list}
 
     if profile_id:
         try:
