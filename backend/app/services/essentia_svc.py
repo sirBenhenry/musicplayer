@@ -1,7 +1,22 @@
 """Audio feature extraction using Essentia.
 
-Each song is extracted in a subprocess (_essentia_worker.py) so that
-C-level crashes or exit() calls in Essentia/FFmpeg cannot kill uvicorn.
+Three-level extraction pipeline — guarantees a vector for every downloadable song:
+
+  Level 1  Essentia full extraction on original file (subprocess).
+           May SIGSEGV on unsupported codecs or malformed audio — subprocess
+           dies, parent catches exit code and falls through.
+
+  Level 2  ffmpeg converts file to mono 44100Hz 16-bit PCM WAV, then Essentia
+           full extraction on the WAV (new subprocess).
+           Handles the common "AudioLoader: Unsupported codec!" case.
+           Can still SIGSEGV on audio content that triggers Essentia C bugs.
+
+  Level 3  Pure Python/numpy extraction on the WAV (_essentia_worker numpy mode).
+           No Essentia C code — cannot SIGSEGV under any circumstances.
+           Produces a sparse but valid 128-dim vector (energy, ZCR, spectral
+           centroid, rolloff, MFCC populated; key/HPCP/danceability zeroed).
+
+Only returns None when the file cannot be downloaded at all.
 """
 import asyncio
 import json
@@ -13,152 +28,53 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 
-def _extract_sync(file_path: str) -> Optional[list[float]]:
-    """Synchronous Essentia feature extraction. Returns 128-dim float32 vector.
-
-    Vector layout (38 values used, rest zero-padded to 128):
-      [0]     BPM / 200
-      [1]     key index / 11  (0=C … 11=B)
-      [2]     scale  (1=major, 0=minor)
-      [3]     key strength
-      [4-16]  MFCC mean (13 coefficients) — timbre texture
-      [17]    spectral centroid mean / 10000
-      [18]    spectral centroid var / 1e8
-      [19]    energy
-      [20]    loudness / 100
-      [21]    danceability
-      [22-33] HPCP mean (12 bins) — harmonic pitch class / chord color
-      [34]    spectral rolloff / 22050  — brightness
-      [35]    zero crossing rate mean   — percussiveness / noisiness
-      [36]    dissonance                — harmonic tension
-      [37]    dynamic complexity / 10  — loudness variation
-      [38-127] zero padding
-    """
+async def _convert_to_wav_async(file_path: str) -> Optional[str]:
+    """Convert audio to mono 44100Hz 16-bit PCM WAV via ffmpeg. Returns temp path or None."""
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", dir="/tmp", delete=False)
+    tmp.close()
     try:
-        import essentia.standard as es
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y", "-i", file_path,
+            "-ar", "44100", "-ac", "1", "-acodec", "pcm_s16le", "-f", "wav",
+            tmp.name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            log.error("ffmpeg WAV conversion timeout for %s", file_path)
+            Path(tmp.name).unlink(missing_ok=True)
+            return None
 
-        loader = es.MonoLoader(filename=file_path, sampleRate=44100)
-        audio = loader()
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace")[-300:] if stderr else ""
+            log.warning("ffmpeg conversion failed for %s: %s", file_path, err)
+            Path(tmp.name).unlink(missing_ok=True)
+            return None
 
-        # ── Rhythm ───────────────────────────────────────────────────────────
-        rhythm_extractor = es.RhythmExtractor2013(method="multifeature")
-        bpm, beats, beats_confidence, _, beats_intervals = rhythm_extractor(audio)
+        # Reject empty/header-only files (valid WAV minimum is ~44 bytes header + data)
+        size = Path(tmp.name).stat().st_size
+        if size < 100:
+            log.warning("ffmpeg produced near-empty WAV (%d bytes) for %s", size, file_path)
+            Path(tmp.name).unlink(missing_ok=True)
+            return None
 
-        # ── Key / Scale ───────────────────────────────────────────────────────
-        key_extractor = es.KeyExtractor()
-        key, scale, key_strength = key_extractor(audio)
-        _KEY_MAP = {
-            "C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3,
-            "E": 4, "F": 5, "F#": 6, "Gb": 6, "G": 7, "G#": 8, "Ab": 8,
-            "A": 9, "A#": 10, "Bb": 10, "B": 11,
-        }
-        key_idx = _KEY_MAP.get(key, 0)
-        scale_val = 1.0 if scale == "major" else 0.0
-
-        # ── Frame-level features ──────────────────────────────────────────────
-        windowing = es.Windowing(type="hann")
-        spectrum = es.Spectrum()
-        mfcc_extractor = es.MFCC(numberCoefficients=13)
-        hpcp_extractor = es.HPCP()
-        sc_extractor = es.SpectralCentroidTime()
-        rolloff_extractor = es.RollOff()
-        zcr_extractor = es.ZeroCrossingRate()
-        dissonance_extractor = es.Dissonance()
-
-        mfcc_frames = []
-        hpcp_frames = []
-        sc_frames = []
-        rolloff_frames = []
-        zcr_frames = []
-        dissonance_frames = []
-
-        spec_peaks = es.SpectralPeaks()
-
-        for frame in es.FrameGenerator(audio, frameSize=2048, hopSize=512):
-            windowed = windowing(frame)
-            spec = spectrum(windowed)
-
-            # MFCC
-            _, mfcc = mfcc_extractor(spec)
-            mfcc_frames.append(mfcc)
-
-            # HPCP (harmonic pitch class profile)
-            freqs, mags = spec_peaks(spec)
-            hpcp = hpcp_extractor(freqs, mags)
-            hpcp_frames.append(hpcp)
-
-            # Spectral centroid
-            sc_frames.append(sc_extractor(frame))
-
-            # Spectral rolloff
-            rolloff_frames.append(rolloff_extractor(spec))
-
-            # Zero crossing rate
-            zcr_frames.append(float(zcr_extractor(frame)))
-
-            # Dissonance
-            if len(freqs) > 1:
-                dissonance_frames.append(float(dissonance_extractor(freqs, mags)))
-
-        mfcc_mean = np.mean(mfcc_frames, axis=0) if mfcc_frames else np.zeros(13)
-        hpcp_mean = np.mean(hpcp_frames, axis=0) if hpcp_frames else np.zeros(12)
-        sc_arr = np.array(sc_frames) if sc_frames else np.zeros(1)
-        sc_mean = float(np.mean(sc_arr))
-        sc_var = float(np.var(sc_arr))
-        rolloff_mean = float(np.mean(rolloff_frames)) if rolloff_frames else 0.0
-        zcr_mean = float(np.mean(zcr_frames)) if zcr_frames else 0.0
-        dissonance_mean = float(np.mean(dissonance_frames)) if dissonance_frames else 0.0
-
-        # ── Song-level features ───────────────────────────────────────────────
-        energy = float(es.Energy()(audio))
-        loudness = float(es.Loudness()(audio))
-
-        danceability_extractor = es.Danceability()
-        danceability, _ = danceability_extractor(audio)
-
-        dynamic_complexity_extractor = es.DynamicComplexity()
-        dynamic_complexity, _ = dynamic_complexity_extractor(audio)
-
-        # ── Assemble vector ───────────────────────────────────────────────────
-        features = np.array([
-            bpm / 200.0,
-            key_idx / 11.0,
-            scale_val,
-            key_strength,
-            *mfcc_mean,           # 13 values → indices 4–16
-            sc_mean / 10000.0,
-            sc_var / 1e8,
-            min(energy, 1.0),
-            min(abs(loudness) / 100.0, 1.0),
-            float(danceability),
-            *hpcp_mean,           # 12 values → indices 22–33
-            rolloff_mean / 22050.0,
-            zcr_mean,
-            dissonance_mean,
-            min(float(dynamic_complexity) / 10.0, 1.0),
-        ], dtype=np.float32)
-
-        # Pad to 128
-        if len(features) < 128:
-            features = np.pad(features, (0, 128 - len(features)))
-        else:
-            features = features[:128]
-
-        return features.tolist()
-
+        return tmp.name
     except Exception as e:
-        log.error("Essentia extraction failed for %s: %s", file_path, e)
+        log.error("ffmpeg error for %s: %s", file_path, e)
+        Path(tmp.name).unlink(missing_ok=True)
         return None
 
 
-async def extract_features(file_path: str) -> Optional[list[float]]:
-    """Run Essentia extraction in a subprocess for crash isolation.
-
-    If Essentia's C code calls exit() or segfaults, only the subprocess dies.
-    """
+async def _run_worker(file_path: str, mode: str = "essentia") -> Optional[list]:
+    """Spawn essentia worker subprocess. Returns feature list or None on any failure."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "app.services._essentia_worker", file_path,
+            sys.executable, "-m", "app.services._essentia_worker", file_path, mode,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -167,25 +83,70 @@ async def extract_features(file_path: str) -> Optional[list[float]]:
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            log.error("Essentia timeout (180s) for %s", file_path)
+            log.error("Worker timeout (mode=%s, 180s) for %s", mode, file_path)
             return None
 
         if proc.returncode != 0:
             msg = stderr.decode(errors="replace")[:300] if stderr else ""
-            log.error("Essentia worker exit %d for %s: %s", proc.returncode, file_path, msg)
+            log.warning("Worker exit %d (mode=%s) for %s: %s",
+                        proc.returncode, mode, file_path, msg)
             return None
 
         try:
             return json.loads(stdout.decode())
         except (json.JSONDecodeError, ValueError):
-            # Subprocess exited 0 but printed no valid JSON (e.g. C-level exit(0))
             msg = stderr.decode(errors="replace")[:200] if stderr else ""
-            log.error("Essentia no output for %s: %s", file_path, msg)
+            log.warning("Worker produced no valid JSON (mode=%s) for %s: %s",
+                        mode, file_path, msg)
             return None
 
     except Exception as e:
-        log.error("extract_features error for %s: %s", file_path, e)
+        log.error("_run_worker error (mode=%s) for %s: %s", mode, file_path, e)
         return None
+
+
+async def extract_features(file_path: str) -> Optional[list[float]]:
+    """Extract 128-dim feature vector. Three-level fallback guarantees a result.
+
+    Returns None only if the source file cannot be processed at all (extremely rare).
+    """
+    # ── Level 1: full Essentia on original ───────────────────────────────────
+    result = await _run_worker(file_path, mode="essentia")
+    if result is not None:
+        return result
+
+    log.info("Level 1 failed for %s — converting to WAV", file_path)
+
+    # ── WAV conversion (shared by levels 2 & 3) ───────────────────────────
+    wav_path = await _convert_to_wav_async(file_path)
+    if wav_path is None:
+        # ffmpeg couldn't produce a WAV — file is likely corrupt or empty
+        log.error("WAV conversion failed for %s — no vector produced", file_path)
+        return None
+
+    try:
+        # ── Level 2: full Essentia on WAV ────────────────────────────────────
+        result = await _run_worker(wav_path, mode="essentia")
+        if result is not None:
+            log.info("Level 2 (Essentia/WAV) success for %s", file_path)
+            return result
+
+        log.info("Level 2 failed for %s — using numpy fallback", file_path)
+
+        # ── Level 3: pure numpy on WAV (guaranteed, no Essentia C code) ──────
+        result = await _run_worker(wav_path, mode="numpy")
+        if result is not None:
+            log.info("Level 3 (numpy/WAV) success for %s", file_path)
+            return result
+
+        log.error("All 3 levels failed for %s — this should not happen", file_path)
+        return None
+
+    finally:
+        try:
+            Path(wav_path).unlink()
+        except Exception:
+            pass
 
 
 async def analyse_pending_songs(limit: int = 50) -> int:
@@ -219,7 +180,7 @@ async def analyse_pending_songs(limit: int = 50) -> int:
                     except Exception as ae:
                         log.warning("_auto_assign_profile failed for %s: %s", song.id, ae)
                     analysed += 1
-                await db.commit()  # commit per-song so crashes don't lose progress
+                await db.commit()  # per-song commit so crashes don't lose progress
             finally:
                 if tmp_path and Path(tmp_path).exists():
                     try:
@@ -237,13 +198,12 @@ async def analyse_all_songs() -> int:
     from ..core.database import AsyncSessionLocal
     from ..models.library import Song
 
-    # Fetch all pending song IDs + navidrome_ids
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(Song.id, Song.navidrome_id)
             .where(Song.analysed_at == None)  # noqa: E711
         )
-        pending = result.fetchall()  # list of (id, navidrome_id)
+        pending = result.fetchall()
 
     if not pending:
         log.info("analyse_all_songs: nothing to do")
@@ -252,7 +212,7 @@ async def analyse_all_songs() -> int:
     log.info("analyse_all_songs: %d songs to analyse", len(pending))
     sem = asyncio.Semaphore(6)
     total = 0
-    COMMIT_BATCH = 50  # commit to DB every 50 songs extracted
+    COMMIT_BATCH = 50
 
     async def _process_one(song_id, navidrome_id) -> tuple:
         async with sem:
@@ -271,9 +231,8 @@ async def analyse_all_songs() -> int:
                     except Exception:
                         pass
 
-    # Process in COMMIT_BATCH-sized chunks so we commit periodically
     for chunk_start in range(0, len(pending), COMMIT_BATCH):
-        chunk = pending[chunk_start:chunk_start + COMMIT_BATCH]
+        chunk = pending[chunk_start: chunk_start + COMMIT_BATCH]
         results = await asyncio.gather(*[_process_one(sid, nid) for sid, nid in chunk])
 
         now = datetime.now(timezone.utc)
@@ -301,7 +260,9 @@ async def analyse_all_songs() -> int:
 
 async def _download_to_temp(navidrome_id: str) -> Optional[str]:
     """Stream audio from Navidrome to a temp file. Returns temp path or None on error."""
-    import os, tempfile, httpx
+    import os
+    import tempfile
+    import httpx
 
     nav_url = os.environ.get("NAVIDROME_URL", "http://navidrome:4533")
     nav_user = os.environ.get("NAVIDROME_USER", "admin")
@@ -322,28 +283,13 @@ async def _download_to_temp(navidrome_id: str) -> Optional[str]:
                     return None
                 content_type = r.headers.get("content-type", "")
                 ext = ".flac" if "flac" in content_type else ".m4a" if "mp4" in content_type else ".mp3"
-                with tempfile.NamedTemporaryFile(
-                    suffix=ext, dir="/tmp", delete=False
-                ) as f:
+                with tempfile.NamedTemporaryFile(suffix=ext, dir="/tmp", delete=False) as f:
                     async for chunk in r.aiter_bytes(chunk_size=65536):
                         f.write(chunk)
                     return f.name
     except Exception as e:
         log.error("_download_to_temp %s: %s", navidrome_id, e)
         return None
-
-
-def _resolve_path(file_path: str) -> Optional[str]:
-    """Convert Song.file_path (absolute or relative) to absolute container path."""
-    import os
-    music_dir = os.environ.get("MUSIC_DIR", "/data/music/media/music")
-    if not file_path:
-        return None
-    if file_path.startswith("/"):
-        abs_path = file_path
-    else:
-        abs_path = f"{music_dir}/{file_path}"
-    return abs_path if Path(abs_path).exists() else None
 
 
 async def _auto_assign_profile(db, song, vec: list[float]) -> None:
