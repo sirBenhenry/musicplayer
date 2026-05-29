@@ -243,6 +243,76 @@ async def trigger_analyse_resume(_: str = Depends(require_auth)):
     return {"status": "resume analysis queued"}
 
 
+@router.get("/analysis-status", dependencies=[Depends(require_auth)])
+async def get_analysis_status(db: AsyncSession = Depends(get_db)):
+    """Return counts + queued/failed/in-progress song lists for the analysis monitor."""
+    from sqlalchemy import text
+    from ..services.essentia_svc import get_currently_analysing
+    from ..models.library import Song
+
+    in_progress_ids = set(get_currently_analysing())
+
+    counts = (await db.execute(text("""
+        SELECT
+            COUNT(*) AS total,
+            COUNT(feature_vector) AS completed,
+            COUNT(*) FILTER (WHERE analysed_at IS NULL) AS queued_count,
+            COUNT(*) FILTER (WHERE analysed_at IS NOT NULL AND feature_vector IS NULL) AS failed_count
+        FROM songs
+    """))).fetchone()
+
+    # Fetch queued (analysed_at IS NULL, not currently in-progress)
+    queued_rows = (await db.execute(
+        select(Song.id, Song.title, Song.artist)
+        .where(Song.analysed_at == None)  # noqa: E711
+        .order_by(Song.artist, Song.title)
+        .distinct()
+        .limit(200)
+    )).all()
+
+    # Fetch failed (analysed_at set, no vector)
+    failed_rows = (await db.execute(
+        select(Song.id, Song.title, Song.artist)
+        .where(Song.analysed_at != None, Song.feature_vector == None)  # noqa: E711
+        .order_by(Song.artist, Song.title)
+        .distinct()
+        .limit(200)
+    )).all()
+
+    def _row(r):
+        return {"id": str(r.id), "title": r.title or "", "artist": r.artist or ""}
+
+    in_progress_list = [_row(r) for r in queued_rows if str(r.id) in in_progress_ids]
+    queued_list = [_row(r) for r in queued_rows if str(r.id) not in in_progress_ids]
+
+    return {
+        "total": counts.total,
+        "completed": counts.completed,
+        "queued": counts.queued_count,
+        "failed": counts.failed_count,
+        "in_progress": len(in_progress_list),
+        "songs_in_progress": in_progress_list,
+        "songs_queued": queued_list[:100],
+        "songs_failed": [_row(r) for r in failed_rows[:100]],
+    }
+
+
+@router.post("/analysis-retry-failed", dependencies=[Depends(require_auth)])
+async def retry_failed_analysis(db: AsyncSession = Depends(get_db)):
+    """Reset analysed_at for all songs with no vector so they'll be retried."""
+    from sqlalchemy import update
+    from ..models.library import Song
+    result = await db.execute(
+        update(Song)
+        .where(Song.analysed_at != None, Song.feature_vector == None)  # noqa: E711
+        .values(analysed_at=None)
+        .returning(Song.id)
+    )
+    count = len(result.fetchall())
+    await db.commit()
+    return {"reset": count}
+
+
 @router.post("/retry-downloads")
 async def trigger_retry_downloads(_: str = Depends(require_auth)):
     asyncio.create_task(retry_failed_downloads())

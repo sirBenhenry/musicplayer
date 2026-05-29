@@ -214,6 +214,9 @@ export default function SettingsScreen() {
         <TouchableOpacity onPress={() => router.push('/downloads')} style={[styles.logoutRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}>
           <Text style={{ color: theme.fgStrong, fontSize: 15 }}>Pipeline Activity</Text>
         </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push('/analysis')} style={[styles.logoutRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}>
+          <Text style={{ color: theme.fgStrong, fontSize: 15 }}>Audio Analysis</Text>
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={updateState === 'available' && latestUrl
             ? () => Linking.openURL(latestUrl)

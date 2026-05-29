@@ -27,6 +27,14 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
+# In-memory set of song IDs currently being analysed (UUIDs as str).
+# Cleared on restart — purely for live monitoring.
+_currently_analysing: set[str] = set()
+
+
+def get_currently_analysing() -> list[str]:
+    return list(_currently_analysing)
+
 
 async def _convert_to_wav_async(file_path: str) -> Optional[str]:
     """Convert audio to mono 44100Hz 16-bit PCM WAV via ffmpeg. Returns temp path or None."""
@@ -167,9 +175,11 @@ async def analyse_pending_songs(limit: int = 50) -> int:
         for song in songs:
             if not song.navidrome_id:
                 continue
+            _currently_analysing.add(str(song.id))
             tmp_path = await _download_to_temp(song.navidrome_id)
             try:
                 if not tmp_path:
+                    _currently_analysing.discard(str(song.id))
                     continue
                 vec = await extract_features(tmp_path)
                 song.analysed_at = datetime.now(timezone.utc)  # always mark; prevents infinite retry
@@ -182,6 +192,7 @@ async def analyse_pending_songs(limit: int = 50) -> int:
                     analysed += 1
                 await db.commit()  # per-song commit so crashes don't lose progress
             finally:
+                _currently_analysing.discard(str(song.id))
                 if tmp_path and Path(tmp_path).exists():
                     try:
                         Path(tmp_path).unlink()

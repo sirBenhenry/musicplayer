@@ -202,6 +202,21 @@ export const exportLibrary = () =>
 export const applyLibraryChanges = (songs: { id: string; profile?: string | null; delete?: boolean }[]) =>
   req<{ assigned: number; deleted: number; errors: string[] }>('POST', '/api/v1/admin/apply-library', { songs });
 
+export const getAnalysisStatus = () =>
+  req<{
+    total: number;
+    completed: number;
+    queued: number;
+    failed: number;
+    in_progress: number;
+    songs_in_progress: Array<{ id: string; title: string; artist: string }>;
+    songs_queued: Array<{ id: string; title: string; artist: string }>;
+    songs_failed: Array<{ id: string; title: string; artist: string }>;
+  }>('GET', '/api/v1/admin/analysis-status');
+
+export const retryFailedAnalysis = () =>
+  req<{ reset: number }>('POST', '/api/v1/admin/analysis-retry-failed');
+
 export const getSystemStatus = () =>
   req<{
     services: Array<{ name: string; ok: boolean; error?: string; version?: string; active_searches?: number; dl_speed?: number; up_speed?: number; active_torrents?: number }>;
