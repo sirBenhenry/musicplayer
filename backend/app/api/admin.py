@@ -263,27 +263,25 @@ async def get_analysis_status(db: AsyncSession = Depends(get_db)):
 
     # Fetch queued (analysed_at IS NULL, not currently in-progress)
     queued_rows = (await db.execute(
-        select(Song.id, Song.title, Song.artist)
+        select(Song.id, Song.title, Song.display_artist)
         .where(Song.analysed_at == None)  # noqa: E711
-        .order_by(Song.artist, Song.title)
-        .distinct()
+        .order_by(Song.display_artist, Song.title)
         .limit(200)
     )).all()
 
     # Fetch failed (analysed_at set, no vector)
     failed_rows = (await db.execute(
-        select(Song.id, Song.title, Song.artist)
+        select(Song.id, Song.title, Song.display_artist)
         .where(Song.analysed_at != None, Song.feature_vector == None)  # noqa: E711
-        .order_by(Song.artist, Song.title)
-        .distinct()
+        .order_by(Song.display_artist, Song.title)
         .limit(200)
     )).all()
 
     def _row(r):
-        return {"id": str(r.id), "title": r.title or "", "artist": r.artist or ""}
+        return {"id": str(r.id), "title": r.title or "", "artist": r.display_artist or ""}
 
     in_progress_list = [_row(r) for r in queued_rows if str(r.id) in in_progress_ids]
-    queued_list = [_row(r) for r in queued_rows if str(r.id) not in in_progress_ids]
+    queued_list = [_row(r) for r in queued_rows if str(r.id) not in in_progress_ids][:100]
 
     return {
         "total": counts.total,
