@@ -1,14 +1,16 @@
-"""Audio feature extraction using Essentia. Runs in a thread pool (CPU-bound)."""
+"""Audio feature extraction using Essentia.
+
+Each song is extracted in a subprocess (_essentia_worker.py) so that
+C-level crashes or exit() calls in Essentia/FFmpeg cannot kill uvicorn.
+"""
 import asyncio
+import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import sys
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-
 log = logging.getLogger(__name__)
-_executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="essentia")
 
 
 def _extract_sync(file_path: str) -> Optional[list[float]]:
@@ -150,9 +152,40 @@ def _extract_sync(file_path: str) -> Optional[list[float]]:
 
 
 async def extract_features(file_path: str) -> Optional[list[float]]:
-    """Async wrapper — runs extraction in thread pool."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _extract_sync, file_path)
+    """Run Essentia extraction in a subprocess for crash isolation.
+
+    If Essentia's C code calls exit() or segfaults, only the subprocess dies.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "app.services._essentia_worker", file_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            log.error("Essentia timeout (180s) for %s", file_path)
+            return None
+
+        if proc.returncode != 0:
+            msg = stderr.decode(errors="replace")[:300] if stderr else ""
+            log.error("Essentia worker exit %d for %s: %s", proc.returncode, file_path, msg)
+            return None
+
+        try:
+            return json.loads(stdout.decode())
+        except (json.JSONDecodeError, ValueError):
+            # Subprocess exited 0 but printed no valid JSON (e.g. C-level exit(0))
+            msg = stderr.decode(errors="replace")[:200] if stderr else ""
+            log.error("Essentia no output for %s: %s", file_path, msg)
+            return None
+
+    except Exception as e:
+        log.error("extract_features error for %s: %s", file_path, e)
+        return None
 
 
 async def analyse_pending_songs(limit: int = 50) -> int:
@@ -178,22 +211,21 @@ async def analyse_pending_songs(limit: int = 50) -> int:
                 if not tmp_path:
                     continue
                 vec = await extract_features(tmp_path)
+                song.analysed_at = datetime.now(timezone.utc)  # always mark; prevents infinite retry
                 if vec:
                     song.feature_vector = vec
-                    song.analysed_at = datetime.now(timezone.utc)
                     try:
                         await _auto_assign_profile(db, song, vec)
                     except Exception as ae:
                         log.warning("_auto_assign_profile failed for %s: %s", song.id, ae)
                     analysed += 1
+                await db.commit()  # commit per-song so crashes don't lose progress
             finally:
                 if tmp_path and Path(tmp_path).exists():
                     try:
                         Path(tmp_path).unlink()
                     except Exception:
                         pass
-
-        await db.commit()
 
     return analysed
 

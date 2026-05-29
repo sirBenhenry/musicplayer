@@ -33,6 +33,11 @@ def start_scheduler(settings) -> None:
     # Daily quality upgrade at 03:00
     scheduler.add_job(upgrade_bad_quality_downloads, _cron("0 3 * * *"), id="quality_upgrade")
 
+    # Analyse pending songs every 5 min (batch of 50). Subprocess per song = crash-safe.
+    from ..services.essentia_svc import analyse_pending_songs
+    scheduler.add_job(analyse_pending_songs, "interval", minutes=5, id="essentia_analysis",
+                      kwargs={"limit": 50})
+
     scheduler.start()
 
 
