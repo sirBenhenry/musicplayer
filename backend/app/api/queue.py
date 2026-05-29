@@ -1,4 +1,5 @@
 """In-memory session queue + auto-radio next-song endpoint."""
+import asyncio
 import logging
 import math
 import random
@@ -194,16 +195,16 @@ async def _pick_next(
     # ── Build exclusion set ─────────────────────────────────────────────────
     excluded = {str(seed.id)} | banned_ids | already_picked
 
-    # ── Query candidates ────────────────────────────────────────────────────
-    if seed.feature_vector is not None:
-        candidates = await _query_by_vector(
-            db, seed.feature_vector, profile_id if use_profile else None,
-            excluded, pool_size * 2  # fetch double to allow filtering
-        )
-    else:
-        candidates = await _query_random(
-            db, profile_id if use_profile else None, excluded, pool_size
-        )
+    # ── Query candidates (vector-only — no random fallback) ─────────────────
+    if seed.feature_vector is None:
+        # Trigger background analysis for this song so it's ready next time
+        asyncio.create_task(_analyse_one(str(seed.id)))
+        return None
+
+    candidates = await _query_by_vector(
+        db, seed.feature_vector, profile_id if use_profile else None,
+        excluded, pool_size * 2
+    )
 
     if not candidates:
         return None
@@ -407,6 +408,55 @@ def _softmax_sample(scored: list[tuple[float, dict]], scores: list[float], tempe
 
     chosen = random.choices(scored, weights=weights, k=1)[0]
     return chosen[1]
+
+
+# ── On-demand analysis trigger ────────────────────────────────────────────────
+
+async def _analyse_one(song_id: str) -> None:
+    """Trigger immediate Essentia analysis for a single song (no vector yet)."""
+    try:
+        import uuid as _uuid
+        from ..core.database import AsyncSessionLocal
+        from ..services.essentia_svc import extract_features
+        from ..services.navidrome import stream_url as _stream_url
+        import httpx, tempfile, os
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        pid = _uuid.UUID(song_id)
+        async with AsyncSessionLocal() as db:
+            song = await db.get(Song, pid)
+            if not song or not song.navidrome_id or song.feature_vector is not None:
+                return
+
+            # Download to temp
+            import os as _os
+            nav_url = _os.environ.get("NAVIDROME_URL", "http://navidrome:4533")
+            nav_user = _os.environ.get("NAVIDROME_USER", "admin")
+            nav_pass = _os.environ.get("NAVIDROME_PASS", "musicapp123")
+            params = {"u": nav_user, "p": nav_pass, "v": "1.8.0", "c": "musicapp",
+                      "id": song.navidrome_id, "format": "raw"}
+            async with httpx.AsyncClient(timeout=60) as client:
+                r = await client.get(f"{nav_url}/rest/stream", params=params)
+                if r.status_code != 200:
+                    return
+                ct = r.headers.get("content-type", "")
+                ext = ".flac" if "flac" in ct else ".m4a" if "mp4" in ct else ".mp3"
+                with tempfile.NamedTemporaryFile(suffix=ext, dir="/tmp", delete=False) as f:
+                    f.write(r.content)
+                    tmp = f.name
+
+            try:
+                vec = await extract_features(tmp)
+                if vec:
+                    song.feature_vector = vec
+                song.analysed_at = datetime.now(timezone.utc)
+                await db.commit()
+                log.info("on-demand analysis done for %s", song_id)
+            finally:
+                Path(tmp).unlink(missing_ok=True)
+    except Exception as e:
+        log.warning("_analyse_one failed for %s: %s", song_id, e)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
