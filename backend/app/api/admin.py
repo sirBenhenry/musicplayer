@@ -22,6 +22,41 @@ _GUIDE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_g
 router = APIRouter(prefix="/admin", tags=["admin"])
 log = logging.getLogger(__name__)
 
+# Storage stats cache — the NFS tree walk takes minutes and must NEVER run on
+# the event loop (it froze the whole backend, including /health).
+_storage_cache: dict = {}
+_storage_cache_at: float = 0.0
+_STORAGE_CACHE_TTL = 1800  # seconds
+
+
+def _compute_storage_sync(music_dir: str) -> dict:
+    import shutil
+    music_bytes = 0
+    music_files = 0
+    for root, _, files in os.walk(music_dir):
+        for f in files:
+            try:
+                music_bytes += os.path.getsize(os.path.join(root, f))
+                music_files += 1
+            except OSError:
+                pass
+    disk = shutil.disk_usage(music_dir)
+    return {
+        "music_bytes": music_bytes,
+        "music_files": music_files,
+        "disk_total_bytes": disk.total,
+        "disk_free_bytes": disk.free,
+    }
+
+
+async def _get_storage(music_dir: str) -> dict:
+    global _storage_cache, _storage_cache_at
+    import time
+    if not _storage_cache or time.time() - _storage_cache_at > _STORAGE_CACHE_TTL:
+        _storage_cache = await asyncio.to_thread(_compute_storage_sync, music_dir)
+        _storage_cache_at = time.time()
+    return _storage_cache
+
 
 async def _resolve_profile_names(db: AsyncSession, names: set[str]) -> dict[str, uuid.UUID]:
     """Return {name: profile_id} for all matching profile names."""
@@ -72,7 +107,6 @@ async def get_import_guide(db: AsyncSession = Depends(get_db)):
 async def get_system_status(db: AsyncSession = Depends(get_db)):
     """Aggregate health + stats for all services, storage, and DB."""
     import asyncio
-    import shutil
     import httpx
     from ..core.config import get_settings
     from ..models.events import DownloadJob
@@ -153,27 +187,9 @@ async def get_system_status(db: AsyncSession = Depends(get_db)):
         return_exceptions=False,
     )
 
-    # Storage: actual music folder size + disk partition stats
-    storage: dict = {}
+    # Storage: cached, computed off-loop (see _get_storage)
     try:
-        # Actual bytes used by music files (not the whole NAS partition)
-        music_bytes = 0
-        music_files = 0
-        for root, _, files in os.walk(settings.MUSIC_DIR):
-            for f in files:
-                try:
-                    music_bytes += os.path.getsize(os.path.join(root, f))
-                    music_files += 1
-                except OSError:
-                    pass
-        # Disk partition stats (shows NAS free space / total capacity)
-        disk = shutil.disk_usage(settings.MUSIC_DIR)
-        storage = {
-            "music_bytes": music_bytes,
-            "music_files": music_files,
-            "disk_total_bytes": disk.total,
-            "disk_free_bytes": disk.free,
-        }
+        storage = await _get_storage(settings.MUSIC_DIR)
     except Exception as e:
         storage = {"error": str(e)}
 
