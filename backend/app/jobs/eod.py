@@ -309,8 +309,7 @@ async def _process_artist(pl, listened_ids, skipped_ids, known_ids):
                 deleted += 1
 
         if kept_song_ids and artist_name:
-            artist_action = "follow" if len(kept_song_ids) == len(kept_song_ids | {s for s in known_ids if s in listened_ids}) and len(kept_song_ids) == len(known_ids) else "add"
-            # Simpler: if ALL known songs were kept → follow, else → add
+            # If ALL known songs were kept → follow, else → add
             all_kept = len(listened_ids & known_ids) == len(known_ids) and len(skipped_ids & known_ids) == 0
             artist_action = "follow" if all_kept else "add"
 
