@@ -65,7 +65,7 @@ These were discovered by probing the running system and explain why "everything 
 Done in this session. Kept here for the record. If endpoints 500 again, check
 `docker ps` state of `musicapp-postgres` and host disk first.
 
-### OPS-2 — Redeploy the backend from the repo (CRITICAL, do first, blocks many items)
+### OPS-2 — Redeploy the backend from the repo (CRITICAL, do first, blocks many items) ✅ (2026-06-12, all 8 files deployed, container == repo; genre-gen verify pending nightly run)
 **Problem:** container code ≠ repo code (6 files, repo is newer in 5, container-only hotfix in 1).
 **Fix, in this order:**
 1. First apply the *repo-side* fixes in Phase 1 that are crash-level: **BE-1** (artists 500) and
@@ -140,7 +140,7 @@ with OPS-4 keep an eye on it. No action required beyond OPS-4.
 
 ## Phase 1 — Backend correctness bugs
 
-### BE-1 — `GET /artists/{artist_id}` always 500s (CRITICAL — breaks artist page)
+### BE-1 — `GET /artists/{artist_id}` always 500s (CRITICAL — breaks artist page) ✅ (2026-06-12, deployed + verified live)
 **File:** `backend/app/api/library.py` lines 432–438.
 **Problem:** `ArtistOut` declares `monitored: bool` (required, no default) but the `get_artist`
 endpoint constructs `ArtistOut(...)` **without** `monitored` → Pydantic `ValidationError` → 500 on
@@ -155,7 +155,7 @@ return ArtistOut(id=a.id, navidrome_id=a.navidrome_id, name=a.name,
 **Verify:** `curl /api/v1/artists/<uuid>` → 200 with `monitored` field; artist page in app shows name
 and correct Add/Follow/Following state.
 
-### BE-2 — EOD artist-slot processing crashes with TypeError (CRITICAL — artist prompts never fire)
+### BE-2 — EOD artist-slot processing crashes with TypeError (CRITICAL — artist prompts never fire) ✅ (2026-06-12, deployed; verify at next artist-slot EOD)
 **File:** `backend/app/jobs/eod.py` line 312.
 **Problem:** dead leftover line executes `len(kept_song_ids | {…})` where `kept_song_ids` is a **list**
 — `list | set` raises `TypeError` whenever an artist playlist reaches the 80% threshold with kept
@@ -388,7 +388,7 @@ return result.scalar_one()
 ```
 **Verify:** same counts; cleanup job finishes fast.
 
-### BE-21 — `system-status` freezes the ENTIRE backend (CRITICAL — discovered live, after initial plan)
+### BE-21 — `system-status` freezes the ENTIRE backend (CRITICAL — discovered live, after initial plan) ✅ (2026-06-12, deployed + verified live: 0 health failures during walk)
 **File:** `backend/app/api/admin.py` `get_system_status` lines 156–178.
 **Problem:** the endpoint runs a **synchronous** `os.walk(settings.MUSIC_DIR)` + per-file
 `os.path.getsize` over NFS, inside the async handler. This blocks the asyncio event loop — while the

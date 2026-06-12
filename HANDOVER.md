@@ -47,21 +47,27 @@ Work **one FIXPLAN item (or tight batch) at a time: implement → typecheck/veri
 check off in FIXPLAN.md (` ✅ (date)` on the heading) → update this file**. That is Ben's standing
 instruction.
 
-1. **BE-1** — `GET /artists/{id}` 500 (missing `monitored` field). Code fix + deploy via Portainer
-   tar-upload (CLAUDE.md workflow; LAN available).
-2. **BE-2** — `jobs/eod.py` line ~312 `list | set` TypeError (kills artist prompts).
-3. **BE-21** — `system-status` sync `os.walk` over NFS blocks the event loop (mobile half — 120s
-   poll — already done).
-4. **OPS-2** — redeploy ALL drifted files to the container (6 files listed in FIXPLAN OPS-2) so
-   container == repo, then restart + smoke-test `/health`, `/artists/{id}`.
-5. **OPS-3, BE-9, BE-10** — tmp janitor; library_sync must not delete songs on transient Navidrome
-   errors; notification dedup (271 open).
-6. **BE-3/4, SRC-2** — soulseek result-state + path fixes; retry cap.
-7. Backend perf batch **BE-5/6/12/13/17**, then DSC/SRC batches, then CLN items (CLN-9 is
+~~BE-1, BE-2, BE-21, OPS-2~~ — DONE & DEPLOYED 2026-06-12 (container == repo, all smoke tests
+green: `/health` 30–50ms during storage walk, `artists/{id}` 200 with `monitored`, `songs/stamp`
+OK). APK **v1.2.0 built & released** (https://github.com/sirBenhenry/musicplayer/releases/tag/v1.2.0).
+
+1. **OPS-2 leftover verify:** after tonight's 02:00 nightly, `GET /discovery/today` should include
+   a `genre` slot playlist (new_genre.py redeploy removed the broken web_search hotfix).
+2. **OPS-3** — Essentia tmp-file janitor (the disk-full root cause).
+3. **BE-9** — library_sync must not delete songs on transient Navidrome errors (wipes profile
+   assignments).
+4. **BE-10** — notification dedup (271 open notifications).
+5. **BE-3/4, SRC-2** — soulseek result-state + path fixes; retry cap.
+6. Backend perf batch **BE-5/6/12/13/17**, then DSC/SRC batches, then CLN items (CLN-9 is
    interactive with Ben — never bulk-delete autonomously), then **Phase 6 OFFLINE-1**.
-8. **APK build gate** (any time Ben wants to test the new frontend): `cd mobile/android &&
-   ./gradlew assembleRelease` → bump `mobile/app.json` version → `gh release create` (MANDATORY)
-   → `adb install`. Then the manual on-device pass per FIXPLAN verify steps for MOB-1..18.
+7. **On-device manual pass** for MOB-1..18 once Ben installs v1.2.0 (skip-to-delete, queue ops,
+   shuffle/repeat, haptics).
+
+**Deploy tooling:** `scripts/deploy_patch.sh [--restart]` does the Portainer upload+restart (edit
+the tar lists per batch). **Gotcha (2026-06-12): WSL NAT can silently lose LAN access while
+Windows still reaches 10.1.8.4** — if curl from WSL times out, run the same curl via PowerShell
+`curl.exe` (JSON bodies via `-d "@file"` — inline quoting breaks). Android SDK for the APK build:
+`ANDROID_HOME=/home/ben/android-sdk` (not set in the non-interactive shell).
 
 ### Verification debt (cannot be done in cloud — needs Ben or local session)
 - Nothing implemented this session has run on a device. After typecheck+build: full manual pass per
