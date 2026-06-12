@@ -435,7 +435,8 @@ async def get_artist(artist_id: uuid.UUID, db: Annotated[AsyncSession, Depends(g
     if not a:
         raise HTTPException(404, "Artist not found")
     return ArtistOut(id=a.id, navidrome_id=a.navidrome_id, name=a.name,
-                     followed=a.followed, new_release=a.new_release_flagged_at is not None)
+                     followed=a.followed, monitored=a.lidarr_id is not None,
+                     new_release=a.new_release_flagged_at is not None)
 
 
 @router.post("/artists/{artist_id}/add", status_code=204)
