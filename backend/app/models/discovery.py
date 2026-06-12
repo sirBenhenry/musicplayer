@@ -21,6 +21,7 @@ class DailyPlaylist(Base):
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     songs: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     paused_to_tomorrow: Mapped[bool] = mapped_column(Boolean, default=False)
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
     generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     profile: Mapped["Profile"] = relationship(back_populates="daily_playlists")  # type: ignore[name-defined]

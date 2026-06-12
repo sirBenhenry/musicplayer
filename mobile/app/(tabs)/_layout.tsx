@@ -1,8 +1,11 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS, useSharedValue } from 'react-native-reanimated';
+
+const { width: SW, height: SH } = Dimensions.get('window');
+const NAV_H = 72;
 import { useTheme } from '../../hooks/useTheme';
 import { useStore } from '../../lib/store';
 import { Icon } from '../../components/shared/Icon';
@@ -34,27 +37,23 @@ export default function TabLayout() {
   const profilesRef = useRef(profiles);
   profilesRef.current = profiles;
   const positionsRef = useRef<Array<{ x: number; y: number }>>([]);
-  const anchorRef = useRef({ x: 0, y: 0 });
+  // Pre-measured anchor — updated on layout so openRadial never needs async measure
+  const anchorRef = useRef({ x: SW / 2, y: SH - NAV_H / 2 });
 
   const openRadial = useCallback(() => {
-    homeRef.current?.measure((_fx, _fy, w, h, px, py) => {
-      const ax = px + w / 2;
-      const ay = py + h / 2;
-      anchorRef.current = { x: ax, y: ay };
-      positionsRef.current = computeNodePositions(profilesRef.current.length, ax, ay);
-      setRadialAnchor({ x: ax, y: ay });
-      hoveredIdRef.current = null;
-      setHoveredId(null);
-      setRadialOpen(true);
-      isOpen.value = true;
-    });
-  }, [isOpen]);
+    const { x: ax, y: ay } = anchorRef.current;
+    positionsRef.current = computeNodePositions(profilesRef.current.length, ax, ay);
+    setRadialAnchor({ x: ax, y: ay });
+    hoveredIdRef.current = null;
+    setHoveredId(null);
+    setRadialOpen(true);
+  }, []);
 
   const closeRadial = useCallback(() => {
     isOpen.value = false;
-    setRadialOpen(false);
     setHoveredId(null);
     hoveredIdRef.current = null;
+    setRadialOpen(false);
   }, [isOpen]);
 
   const updateHover = useCallback((fx: number, fy: number) => {
@@ -80,7 +79,10 @@ export default function TabLayout() {
   const finalizeSelection = useCallback(() => {
     const selected = hoveredIdRef.current;
     closeRadial();
-    if (selected) setActiveProfile(selected);
+    if (selected) {
+      const p = profiles.find(pr => pr.id === selected);
+      setActiveProfile(selected, p?.is_catchall ?? false);
+    }
   }, [closeRadial, setActiveProfile]);
 
   const navigateHome = useCallback(() => {
@@ -91,14 +93,14 @@ export default function TabLayout() {
 
   const longPress = Gesture.LongPress()
     .minDuration(280)
-    .maxDistance(200)
     .onStart(() => {
       didLongPress.value = true;
+      isOpen.value = true;
       runOnJS(openRadial)();
     });
 
   const pan = Gesture.Pan()
-    .minDistance(0)
+    .minDistance(8)
     .onUpdate((e) => {
       if (isOpen.value) {
         runOnJS(updateHover)(e.absoluteX, e.absoluteY);
@@ -144,6 +146,11 @@ export default function TabLayout() {
                   <View
                     ref={homeRef}
                     collapsable={false}
+                    onLayout={() => {
+                      homeRef.current?.measure((_fx, _fy, w, h, px, py) => {
+                        if (w > 0) anchorRef.current = { x: px + w / 2, y: py + h / 2 };
+                      });
+                    }}
                     style={[
                       styles.homeBtn,
                       { backgroundColor: theme.accent },

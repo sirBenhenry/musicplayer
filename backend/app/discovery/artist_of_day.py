@@ -42,19 +42,28 @@ async def generate(
             seen.add(c.lower())
             unique_candidates.append(c)
 
-    if not unique_candidates:
-        return {}
-
     rejected_artists = {r["artist"].lower() for r in rejected}
-    unique_candidates = [c for c in unique_candidates if c.lower() not in rejected_artists]
+    if unique_candidates:
+        unique_candidates = [c for c in unique_candidates if c.lower() not in rejected_artists]
 
-    prompt = (
-        f"Profile: {profile['name']} — {profile.get('description', '')}\n\n"
-        f"Candidate artists (all outside user's library):\n{json.dumps(unique_candidates[:60])}\n\n"
-        "Pick ONE artist the user would love. Suggest exactly 6 of their best tracks "
-        "(mix of accessible and deeper cuts).\n\n"
-        "Return JSON: {\"artist\": \"...\", \"tracks\": [{\"artist\": \"...\", \"title\": \"...\"}]}"
-    )
+    if unique_candidates:
+        prompt = (
+            f"Profile: {profile['name']} — {profile.get('description', '')}\n\n"
+            f"Candidate artists (all outside user's library):\n{json.dumps(unique_candidates[:60])}\n\n"
+            "Pick ONE artist the user would love. Suggest exactly 6 of their best tracks "
+            "(mix of accessible and deeper cuts).\n\n"
+            "Return JSON: {\"artist\": \"...\", \"tracks\": [{\"artist\": \"...\", \"title\": \"...\"}]}"
+        )
+    else:
+        log.info("artist_of_day: no Last.fm candidates, falling back to LLM-only")
+        liked_artists = list({s.get("artist_name", "") for s in profile_songs if s.get("artist_name")})[:20]
+        prompt = (
+            f"Profile: {profile['name']} — {profile.get('description', '')}\n\n"
+            f"Artists the user already enjoys:\n{json.dumps(liked_artists)}\n\n"
+            "Pick ONE artist NOT in that list that this user would love. "
+            "Suggest exactly 6 of their best tracks (mix of accessible and deeper cuts).\n\n"
+            "Return JSON: {\"artist\": \"...\", \"tracks\": [{\"artist\": \"...\", \"title\": \"...\"}]}"
+        )
 
     try:
         raw = await llm.complete([{"role": "user", "content": prompt}])

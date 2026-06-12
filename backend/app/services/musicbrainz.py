@@ -160,6 +160,7 @@ async def search_recordings(
                 "artist": artist,
                 "album": album,
                 "mb_recording_id": recording_id,
+                "score": score,
             })
 
     return results

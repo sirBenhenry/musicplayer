@@ -17,9 +17,11 @@ interface Props {
   onAddToPlaylist: () => void;
   onAssignProfile: () => void;
   onDeleted: () => void;
+  /** Optional — when provided, shows a "Play next" row (hidden for the currently playing song). */
+  onPlayNext?: () => void;
 }
 
-export function SongActionSheet({ visible, song, onClose, onAddToPlaylist, onAssignProfile, onDeleted }: Props) {
+export function SongActionSheet({ visible, song, onClose, onAddToPlaylist, onAssignProfile, onDeleted, onPlayNext }: Props) {
   const theme = useTheme();
   const [deleting, setDeleting] = React.useState(false);
 
@@ -60,6 +62,16 @@ export function SongActionSheet({ visible, song, onClose, onAddToPlaylist, onAss
           {song?.title ?? ''}
         </Text>
 
+        {onPlayNext && (
+          <Pressable
+            style={({ pressed }) => [styles.row, { borderBottomColor: theme.borderSoft, opacity: pressed ? 0.6 : 1 }]}
+            onPress={() => { onClose(); setTimeout(onPlayNext, 120); }}
+          >
+            <Icon name="skip" color={theme.fgMuted} size={20} />
+            <Text style={[styles.rowLabel, { color: theme.fgStrong }]}>Play next</Text>
+          </Pressable>
+        )}
+
         <Pressable
           style={({ pressed }) => [styles.row, { borderBottomColor: theme.borderSoft, opacity: pressed ? 0.6 : 1 }]}
           onPress={() => { onClose(); setTimeout(onAddToPlaylist, 120); }}
@@ -84,9 +96,9 @@ export function SongActionSheet({ visible, song, onClose, onAddToPlaylist, onAss
           disabled={deleting}
         >
           {deleting
-            ? <ActivityIndicator size="small" color={theme.error ?? '#e05252'} />
-            : <Icon name="trash" color={theme.error ?? '#e05252'} size={20} />}
-          <Text style={[styles.rowLabel, { color: theme.error ?? '#e05252' }]}>Delete song</Text>
+            ? <ActivityIndicator size="small" color={theme.danger} />
+            : <Icon name="trash" color={theme.danger} size={20} />}
+          <Text style={[styles.rowLabel, { color: theme.danger }]}>Delete song</Text>
         </Pressable>
 
         <Pressable

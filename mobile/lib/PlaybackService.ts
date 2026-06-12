@@ -1,5 +1,6 @@
 import TrackPlayer, { Event } from 'react-native-track-player';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { reportSkipIfDaily } from './audio';
 
 /**
  * Fallback: if the queue runs out (shouldn't happen with pre-loaded auto-queue,
@@ -7,14 +8,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  */
 async function fetchFallbackTrack(songId: string): Promise<any | null> {
   try {
-    const [authRaw, profileId] = await Promise.all([
+    const [authRaw, profileId, isCatchallRaw] = await Promise.all([
       AsyncStorage.getItem('auth'),
       AsyncStorage.getItem('activeProfileId'),
+      AsyncStorage.getItem('activeProfileIsCatchall'),
     ]);
     if (!authRaw) return null;
     const { token, serverUrl } = JSON.parse(authRaw);
     const qs = new URLSearchParams({ song_id: songId, count: '3', scope: 'profile' });
-    if (profileId) qs.set('profile_id', profileId);
+    if (profileId && isCatchallRaw !== '1') qs.set('profile_id', profileId);
     const r = await fetch(`${serverUrl}/api/v1/queue/auto-radio-batch?${qs}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -35,9 +37,10 @@ export async function PlaybackService() {
   TrackPlayer.addEventListener(Event.RemoteSeek, ({ position }) =>
     TrackPlayer.seekTo(position),
   );
-  TrackPlayer.addEventListener(Event.RemoteNext, () =>
-    TrackPlayer.skipToNext().catch(() => {}),
-  );
+  TrackPlayer.addEventListener(Event.RemoteNext, async () => {
+    await reportSkipIfDaily();
+    TrackPlayer.skipToNext().catch(() => {});
+  });
   TrackPlayer.addEventListener(Event.RemotePreviousTrack, async () => {
     const { position } = await TrackPlayer.getProgress();
     if (position > 3) {

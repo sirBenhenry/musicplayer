@@ -20,7 +20,7 @@ import DraggableFlatList, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
 import { useStore, Song } from '../../lib/store';
-import { removeFromExplicitQueue, moveInExplicitQueue } from '../../lib/audio';
+import { removeFromExplicitQueue, moveInExplicitQueue, removeAutoSong } from '../../lib/audio';
 import { getCoverUrl } from '../../lib/api';
 import { CoverArt } from '../shared/CoverArt';
 import { Icon } from '../shared/Icon';
@@ -35,8 +35,16 @@ interface Props {
 export function QueueSheet({ onClose }: Props) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { explicitQueue, autoQueue, addShortBan, setAutoQueue } = useStore();
+  const { explicitQueue, autoQueue, addShortBan, queue, queueIndex } = useStore();
   const [localQueue, setLocalQueue] = useState<Song[]>(explicitQueue);
+
+  // Songs coming up from the playback context (playlist/library) — everything in
+  // the real queue after the current track that isn't an explicit or auto pick.
+  const explicitIds = new Set(explicitQueue.map(s => s.id));
+  const autoIds = new Set(autoQueue.map(s => s.id));
+  const upcomingContext = queue
+    .slice(queueIndex + 1)
+    .filter(s => !explicitIds.has(s.id) && !autoIds.has(s.id));
 
   useEffect(() => {
     setLocalQueue(explicitQueue);
@@ -58,17 +66,11 @@ export function QueueSheet({ onClose }: Props) {
     transform: [{ translateY: translateY.value }],
   }));
 
-  const handleRemoveAutoSong = async (song: Song, idx: number) => {
-    // Add short ban so it won't appear again for 30 min
+  const handleRemoveAutoSong = async (song: Song) => {
+    // Short-ban so it won't be re-suggested for 30 min, then remove by id
     addShortBan(song.id);
-    // Remove from autoQueue store
-    setAutoQueue(autoQueue.filter((_, i) => i !== idx));
-    // Remove from RNTP (auto songs are after explicit queue)
-    const { queueIndex, explicitQueue: eq } = useStore.getState();
-    const rnptIdx = queueIndex + 1 + eq.length + idx;
     try {
-      const { default: TrackPlayer } = await import('react-native-track-player');
-      await TrackPlayer.remove([rnptIdx]);
+      await removeAutoSong(song.id);
     } catch {}
   };
 
@@ -116,7 +118,7 @@ export function QueueSheet({ onClose }: Props) {
     );
   };
 
-  const totalCount = explicitQueue.length + autoQueue.length;
+  const totalCount = explicitQueue.length + autoQueue.length + upcomingContext.length;
 
   return (
     <View style={[StyleSheet.absoluteFillObject, { zIndex: 70 }]}>
@@ -176,6 +178,40 @@ export function QueueSheet({ onClose }: Props) {
           </>
         )}
 
+        {/* Playlist / context remainder */}
+        {upcomingContext.length > 0 && (
+          <>
+            <View style={[styles.sectionHeader, { borderBottomColor: theme.borderSoft }]}>
+              <Text style={[styles.sectionLabel, { color: theme.fgMuted, fontFamily: font.mono }]}>
+                FROM PLAYLIST
+              </Text>
+            </View>
+            {upcomingContext.slice(0, 20).map((song) => (
+              <View
+                key={song.id}
+                style={[styles.row, { borderBottomColor: theme.borderSoft, backgroundColor: theme.bg }]}
+              >
+                <View style={styles.autoIndicator}>
+                  <Icon name="list" color={theme.fgSoft} size={14} strokeWidth={1.5} />
+                </View>
+                <CoverArt
+                  uri={song.navidrome_id ? getCoverUrl(song.navidrome_id) : null}
+                  size={40}
+                  title={song.title}
+                />
+                <View style={styles.info}>
+                  <Text style={[styles.songTitle, { color: theme.fgStrong }]} numberOfLines={1}>
+                    {song.title}
+                  </Text>
+                  <Text style={[styles.artist, { color: theme.fgMuted }]} numberOfLines={1}>
+                    {song.artist}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </>
+        )}
+
         {/* Auto-queue section */}
         {autoQueue.length > 0 && (
           <>
@@ -187,7 +223,7 @@ export function QueueSheet({ onClose }: Props) {
                 acoustically similar
               </Text>
             </View>
-            {autoQueue.map((song, idx) => (
+            {autoQueue.map((song) => (
               <View
                 key={song.id}
                 style={[styles.row, styles.autoRow, { borderBottomColor: theme.borderSoft, backgroundColor: theme.bg }]}
@@ -212,7 +248,7 @@ export function QueueSheet({ onClose }: Props) {
                 </View>
 
                 <Pressable
-                  onPress={() => handleRemoveAutoSong(song, idx)}
+                  onPress={() => handleRemoveAutoSong(song)}
                   hitSlop={10}
                   style={styles.removeBtn}
                 >
@@ -226,7 +262,7 @@ export function QueueSheet({ onClose }: Props) {
         {totalCount === 0 && (
           <View style={styles.empty}>
             <Text style={[styles.emptyText, { color: theme.fgMuted }]}>
-              Queue is empty. Swipe songs to add them.
+              Queue is empty. Long-press a song and choose "Play next", or swipe left on artist pages.
             </Text>
           </View>
         )}

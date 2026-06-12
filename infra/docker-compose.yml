@@ -69,7 +69,7 @@ services:
       - SLSKD_WEB_USERNAME=${SLSKD_USERNAME:-slskd}
       - SLSKD_WEB_PASSWORD=${SLSKD_PASSWORD:-slskd}
       - SLSKD_DOWNLOADS_DIR=/data/music/media/music
-      - SLSKD_SHARED_DIR=/data/music/media/music
+      - SLSKD_SHARED_DIR=/data/music/soulseek-share
     ports:
       - "5030:5030"
     volumes:

@@ -18,7 +18,14 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     headers: headers(),
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
-  if (!r.ok) throw new Error(`${method} ${path} → ${r.status}`);
+  if (!r.ok) {
+    let msg = `${method} ${path} → ${r.status}`;
+    try {
+      const j = await r.json();
+      if (typeof j?.detail === 'string') msg = j.detail;
+    } catch {}
+    throw new Error(msg);
+  }
   if (r.status === 204) return undefined as T;
   return r.json();
 }
@@ -34,6 +41,9 @@ export const updateProfile = (id: string, data: any) => req<any>('PUT', `/api/v1
 export const deleteProfile = (id: string) => req<void>('DELETE', `/api/v1/profiles/${id}`);
 
 // Library
+export const getLibraryStamp = () =>
+  req<{ updated_at: string }>('GET', '/api/v1/songs/stamp');
+
 export const getSongs = (params?: Record<string, string>) => {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
   return req<any[]>('GET', `/api/v1/songs${qs}`);
@@ -45,7 +55,7 @@ export const setSongProfile = (id: string, profileId: string | null) =>
 export const getStreamUrl = (navidromeId: string): string =>
   `${base()}/api/v1/stream/${navidromeId}`;
 export const getCoverUrl = (navidromeId: string): string =>
-  `${base()}/api/v1/cover/${navidromeId}`;
+  `${base()}/api/v1/cover/${navidromeId}?v=2`;
 export const getArtists = (params?: Record<string, string>) => {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
   return req<any[]>('GET', `/api/v1/artists${qs}`);
@@ -68,8 +78,23 @@ export const getPlaylists = (profileId?: string) => {
 export const getPlaylist = (id: string) => req<any>('GET', `/api/v1/discovery/playlists/${id}`);
 export const pausePlaylist = (id: string) =>
   req<void>('POST', `/api/v1/discovery/playlists/${id}/pause`);
-export const triggerGenerate = (profileId: string) =>
-  req<void>('POST', `/api/v1/discovery/generate?profile_id=${profileId}`);
+export const consumePlaylist = (id: string) =>
+  req<void>('POST', `/api/v1/discovery/playlists/${id}/consume`);
+export const flagSong = (playlistId: string, songId: string, action: 'keep' | 'delete') =>
+  req<void>('PATCH', `/api/v1/discovery/playlists/${playlistId}/songs/${songId}/flag`, { action });
+export const triggerGenerate = () =>
+  req<void>('POST', '/api/v1/discovery/generate');
+export const notificationAction = (
+  notifId: string,
+  accept: boolean,
+  profileId?: string,
+  newProfileName?: string,
+) =>
+  req<{ status: string; [key: string]: any }>('POST', `/api/v1/notifications/${notifId}/action`, {
+    accept,
+    profile_id: profileId,
+    new_profile_name: newProfileName,
+  });
 
 // Playback events
 export const postProgress = (songId: string, playlistId: string | null, progressPct: number) =>
@@ -95,12 +120,6 @@ export const getHistory = (limit = 30) =>
   req<any[]>('GET', `/api/v1/history?limit=${limit}`);
 
 // Queue / auto-radio
-export const getAutoRadio = (songId: string, profileId?: string, scope = 'profile') => {
-  const qs = new URLSearchParams({ song_id: songId, scope });
-  if (profileId) qs.set('profile_id', profileId);
-  return req<any>('GET', `/api/v1/queue/auto-radio?${qs}`);
-};
-
 export const getAutoRadioBatch = (
   songId: string,
   count = 5,
@@ -113,9 +132,6 @@ export const getAutoRadioBatch = (
   if (bannedIds.length) qs.set('banned_ids', bannedIds.join(','));
   return req<{ songs: any[] }>('GET', `/api/v1/queue/auto-radio-batch?${qs}`);
 };
-export const getQueue = () => req<any>('GET', '/api/v1/queue');
-export const appendQueue = (songId: string) =>
-  req<void>('POST', '/api/v1/queue/append', { song_id: songId });
 
 // Artist discovery / import
 export const searchNewArtists = (q: string) =>
@@ -201,6 +217,9 @@ export const exportLibrary = () =>
 
 export const applyLibraryChanges = (songs: { id: string; profile?: string | null; delete?: boolean }[]) =>
   req<{ assigned: number; deleted: number; errors: string[] }>('POST', '/api/v1/admin/apply-library', { songs });
+
+export const sendDeviceLogs = (logs: string) =>
+  req<void>('POST', '/api/v1/admin/device-logs', { logs });
 
 export const getAnalysisStatus = () =>
   req<{

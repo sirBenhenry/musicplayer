@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Dimensions, StyleSheet, Text } from 'react-native';
+import { Dimensions, Platform, StyleSheet, Text } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -7,11 +7,10 @@ import Animated, {
   withDelay,
   withTiming,
 } from 'react-native-reanimated';
-import Svg, { Line } from 'react-native-svg';
 import { useTheme } from '../../hooks/useTheme';
 import { Profile } from '../../lib/store';
 
-const { width: SW, height: SH } = Dimensions.get('window');
+const { height: SH } = Dimensions.get('window');
 const NODE_R = 36;
 const NAV_H = 72;
 
@@ -153,7 +152,7 @@ function ProfileNode({ profile, cx, cy, tx, ty, isHovered, isActive, index, them
           shadowOffset: { width: 0, height: isHovered ? 7 : 3 },
           shadowOpacity: isHovered ? 0.48 : 0.1,
           shadowRadius: isHovered ? 22 : 8,
-          elevation: isHovered ? 16 : 4,
+          elevation: Platform.OS === 'android' ? 0 : (isHovered ? 16 : 4),
         },
       ]}
     >
@@ -199,19 +198,6 @@ export function RadialSwitcher({
   return (
     <Animated.View style={[StyleSheet.absoluteFillObject, { zIndex: 20 }]} pointerEvents="none">
       <Animated.View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000' }, backdropStyle]} />
-
-      <Svg width={SW} height={SH} style={StyleSheet.absoluteFillObject} pointerEvents="none">
-        {positions.map((pos, i) => (
-          <Line
-            key={i}
-            x1={anchorX} y1={anchorY}
-            x2={pos.x} y2={pos.y}
-            stroke={theme.accent}
-            strokeWidth={1}
-            strokeOpacity={0.18}
-          />
-        ))}
-      </Svg>
 
       <HubRing cx={anchorX} cy={anchorY} color={theme.accent} />
 

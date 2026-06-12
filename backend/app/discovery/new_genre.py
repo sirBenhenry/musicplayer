@@ -19,13 +19,6 @@ async def generate(
     """Return {genre: str, tracks: [{artist, title}, ...]} with ~10 tracks."""
     history_str = ", ".join(genre_history[-30:]) if genre_history else "none"
 
-    tools = [
-        {
-            "type": "web_search_20250305",
-            "name": "web_search",
-        }
-    ]
-
     prompt = (
         f"Recent genres already used (do NOT repeat): {history_str}\n\n"
         "1. Choose one genre not in that list — it can be niche, geographic, or fusion.\n"
@@ -37,7 +30,6 @@ async def generate(
     try:
         raw = await llm.complete(
             [{"role": "user", "content": prompt}],
-            tools=tools,
         )
         return _parse(raw)
     except Exception as e:

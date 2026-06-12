@@ -27,17 +27,27 @@ async def generate(
     seed_artists = _sample_artists(profile_songs, library_artists, n=10)
     candidates = await _fetch_candidates(seed_artists, library_artists, rejected)
 
-    if not candidates:
-        log.warning("close_match: no candidates after filtering")
-        return []
-
     rejected_str = ", ".join(f"{r['artist']} - {r['title']}" for r in rejected[:50])
-    prompt = (
-        f"Profile: {profile['name']} — {profile.get('description', '')}\n\n"
-        f"Candidate artists/tracks to draw from:\n{json.dumps(candidates[:80], indent=2)}\n\n"
-        f"Already heard / rejected (do NOT include): {rejected_str or 'none'}\n\n"
-        "Select exactly 9 tracks that fit this profile's sound closely."
-    )
+
+    if not candidates:
+        log.info("close_match: no Last.fm candidates, falling back to LLM-only")
+        liked_str = json.dumps(profile_songs[:40], indent=2)
+        prompt = (
+            f"Profile: {profile['name']} — {profile.get('description', '')}\n\n"
+            f"Songs the user already likes:\n{liked_str}\n\n"
+            f"Do NOT include: {rejected_str or 'none'}\n\n"
+            "Based on this taste, suggest exactly 9 tracks by artists NOT in the list above "
+            "that the user would love. Pick tracks that closely match the established sound.\n"
+            "Return JSON array: [{\"artist\": \"...\", \"title\": \"...\"}]"
+        )
+    else:
+        prompt = (
+            f"Profile: {profile['name']} — {profile.get('description', '')}\n\n"
+            f"Candidate artists/tracks to draw from:\n{json.dumps(candidates[:80], indent=2)}\n\n"
+            f"Already heard / rejected (do NOT include): {rejected_str or 'none'}\n\n"
+            "Select exactly 9 tracks that fit this profile's sound closely.\n"
+            "Return JSON array only: [{\"artist\": \"...\", \"title\": \"...\"}]. No markdown, no commentary."
+        )
 
     try:
         raw = await llm.complete([

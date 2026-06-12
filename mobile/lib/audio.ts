@@ -2,6 +2,7 @@ import TrackPlayer, {
   State,
   Event,
   Capability,
+  RepeatMode,
   AppKilledPlaybackBehavior,
 } from 'react-native-track-player';
 import { useStore, Song } from './store';
@@ -70,6 +71,7 @@ export async function setupAudio() {
         artist: track.artist ?? '',
         album: typeof track.album === 'string' ? track.album : undefined,
         duration_sec: (track.duration as number) ?? 0,
+        cover_url: track.artwork as string | undefined,
       },
       track.url as string,
       playlistId ?? undefined,
@@ -129,32 +131,93 @@ export async function setupAudio() {
   });
 }
 
+// ── Skip-to-delete mechanic ───────────────────────────────────────────────────
+// Pressing next on a daily-playlist song before listen-through (90%) counts as a
+// skip → marked for end-of-day deletion. Only daily-playlist tracks carry a
+// playlistId (see _buildTrack callers), so library/user-playlist skips send nothing.
+export async function reportSkipIfDaily(): Promise<void> {
+  try {
+    const track = await TrackPlayer.getActiveTrack();
+    const songId = track?.songId as string | undefined;
+    const playlistId = (track?.playlistId as string | null) ?? null;
+    if (!songId || !playlistId) return;
+    const { position, duration } = await TrackPlayer.getProgress();
+    const pct = duration ? Math.min(1, position / duration) : 0;
+    if (pct >= 0.9) return; // listen-through already fired — not a skip
+    api.postSkip(songId, playlistId, pct).catch(() => {});
+  } catch {}
+}
+
+// ── Queue helpers (id-based — never index arithmetic) ─────────────────────────
+
+function trackToSong(t: any): Song {
+  return {
+    id: t.songId as string,
+    navidrome_id: t.navidromeId as string,
+    title: t.title ?? '',
+    artist: t.artist ?? '',
+    album: typeof t.album === 'string' ? t.album : undefined,
+    duration_sec: (t.duration as number) ?? 0,
+  };
+}
+
+async function rnptIndexOf(songId: string): Promise<number> {
+  const q = await TrackPlayer.getQueue();
+  return q.findIndex((t: any) => t.songId === songId);
+}
+
+/** Rebuild the Zustand queue mirror from the real RNTP queue. */
+async function syncQueueMirror(): Promise<void> {
+  const q = await TrackPlayer.getQueue();
+  const idx = await TrackPlayer.getActiveTrackIndex();
+  useStore.setState({
+    queue: q.map(trackToSong),
+    queueIndex: idx ?? 0,
+  });
+}
+
 /**
- * Fetch the next N auto-radio songs from the current song and pre-load them
- * into RNTP after any explicit queue items.
+ * Append auto-radio songs to reach TARGET=5 slots at the queue tail.
  *
- * Called on: song change, playSong, addToQueue (explicit).
- * Replaces any existing auto-queued tracks in RNTP.
+ * Smart fill: keeps existing auto songs, only fetches what's missing.
+ * Seeds from explicit tail → auto tail → current song.
+ * Bans already-queued auto songs to avoid duplicates.
+ * Scope: respects the Stay-in-profile / Full-library toggle (store.radioScope).
  */
 export async function fillAutoQueue(currentSongId: string): Promise<void> {
   const store = useStore.getState();
-  const { activeProfileId, queueIndex, explicitQueue, autoQueue: prevAutoQueue } = store;
+  const { activeProfileId, explicitQueue, autoQueue: existingAuto, radioScope } = store;
   const bannedIds = store.getActiveBanIds();
 
-  // How many auto slots do we want (always aim for 5)
   const TARGET = 5;
-  // The "seed" for recommendations is the last explicit song if queue non-empty, else current
+  const needed = TARGET - existingAuto.length;
+  if (needed <= 0) return;
+
+  // Seed: explicit tail → auto tail → current song
   const explicitTail = explicitQueue[explicitQueue.length - 1];
-  const seedId = explicitTail?.id ?? currentSongId;
+  const autoTail = existingAuto[existingAuto.length - 1];
+  const seedId = explicitTail?.id ?? autoTail?.id ?? currentSongId;
+
+  // Exclude already-queued auto songs from recommendations
+  const alreadyQueued = existingAuto.map(s => s.id);
+  const allBanned = [...bannedIds, ...alreadyQueued];
+
+  // Profile scope: don't pass profile_id for catchall (its songs have profile_id=NULL
+  // in the DB) or when the user chose "Full library" scope.
+  const activeProfile = store.profiles.find(p => p.id === activeProfileId);
+  const radioProfileId =
+    radioScope === 'library' || activeProfile?.is_catchall
+      ? undefined
+      : (activeProfileId ?? undefined);
 
   let result: { songs: any[] };
   try {
-    result = await api.getAutoRadioBatch(seedId, TARGET, activeProfileId ?? undefined, 'profile', bannedIds);
+    result = await api.getAutoRadioBatch(seedId, needed, radioProfileId, 'profile', allBanned);
   } catch {
     return;
   }
 
-  const newAutoSongs: Song[] = result.songs.map((s: any) => ({
+  const newSongs: Song[] = result.songs.map((s: any) => ({
     id: s.id,
     navidrome_id: s.navidrome_id,
     title: s.title,
@@ -164,28 +227,14 @@ export async function fillAutoQueue(currentSongId: string): Promise<void> {
     album_id: s.album_id,
   }));
 
-  // Remove old auto-queued tracks from RNTP (they sit after explicit queue)
-  const rnptQueue = await TrackPlayer.getQueue();
-  const currentIdx = await TrackPlayer.getActiveTrackIndex() ?? 0;
-  const insertAt = currentIdx + 1 + explicitQueue.length;
+  if (!newSongs.length) return;
 
-  // Remove old auto-radio tracks (anything after explicit queue end)
-  const oldAutoCount = prevAutoQueue.length;
-  if (oldAutoCount > 0) {
-    const toRemove = Array.from({ length: oldAutoCount }, (_, i) => insertAt + i)
-      .filter(i => i < rnptQueue.length);
-    if (toRemove.length > 0) {
-      await TrackPlayer.remove(toRemove);
-    }
-  }
+  // Always append at end — inserting by position would interleave with playlist songs
+  const tracks = newSongs.map(s => _buildTrack(s, null));
+  await TrackPlayer.add(tracks);
 
-  // Add new auto-queued tracks
-  if (newAutoSongs.length > 0) {
-    const tracks = newAutoSongs.map(s => _buildTrack(s, null));
-    await TrackPlayer.add(tracks, insertAt);
-  }
-
-  store.setAutoQueue(newAutoSongs);
+  store.setAutoQueue([...existingAuto, ...newSongs]);
+  await syncQueueMirror();
 }
 
 function _buildTrack(song: {
@@ -211,26 +260,39 @@ function _buildTrack(song: {
   };
 }
 
+/**
+ * Play a song within its context (the list it was tapped in).
+ *
+ * `contextSongs` is REQUIRED for correct behavior whenever the song belongs to a
+ * list (playlist, library, artist page) — callers must pass the full visible list.
+ * Without it the song plays alone (plus explicit queue + auto-radio).
+ *
+ * `playlistId` is set ONLY on the context songs (daily-playlist mechanics);
+ * spliced-in explicit-queue songs never inherit it.
+ */
 export async function playSong(
   song: { id: string; navidrome_id: string; title: string; artist: string; album?: string; duration_sec: number },
   streamUrl: string,
   playlistId: string | null,
+  contextSongs?: Song[],
 ) {
-  const { queue, explicitQueue } = useStore.getState();
+  const { explicitQueue } = useStore.getState();
 
-  const contextSongs = queue.length > 0 ? queue : [song];
-  const targetIdx = Math.max(0, contextSongs.findIndex((s) => s.id === song.id));
+  const base: Song[] = contextSongs && contextSongs.length ? contextSongs : [song as Song];
+  const targetIdx = Math.max(0, base.findIndex((s) => s.id === song.id));
+  const contextIds = new Set(base.map((s) => s.id));
 
-  // Splice explicit queue right after the current song so they play next
-  const before = contextSongs.slice(0, targetIdx + 1);
-  const after = contextSongs.slice(targetIdx + 1);
+  // Splice explicit queue right after the tapped song so they play next
+  const before = base.slice(0, targetIdx + 1);
+  const after = base.slice(targetIdx + 1);
   const merged = [...before, ...explicitQueue, ...after];
 
   // Clear auto-queue — will be refilled after playback starts
   useStore.setState({ autoQueue: [] });
 
   await TrackPlayer.reset();
-  await TrackPlayer.add(merged.map((s) => _buildTrack(s, playlistId)));
+  await TrackPlayer.add(merged.map((s) =>
+    _buildTrack(s, contextIds.has(s.id) ? playlistId : null)));
 
   if (targetIdx > 0) {
     await TrackPlayer.skip(targetIdx);
@@ -240,7 +302,6 @@ export async function playSong(
 
   // Update Zustand immediately (event will also fire but this avoids UI flicker)
   useStore.getState().setCurrentSong(song, streamUrl, playlistId ?? undefined);
-  // Sync merged queue so nextSong display in FullPlayer reflects explicit queue order
   useStore.setState({ queue: merged, queueIndex: targetIdx });
 
   // Pre-load auto-radio songs in background (non-blocking)
@@ -248,7 +309,7 @@ export async function playSong(
 }
 
 export async function togglePlay() {
-  const state = await TrackPlayer.getState();
+  const { state } = await TrackPlayer.getPlaybackState();
   if (state === State.Playing) {
     await TrackPlayer.pause();
     useStore.getState().setIsPlaying(false);
@@ -266,6 +327,7 @@ export async function seek(pct: number) {
 }
 
 export async function skipToNext() {
+  await reportSkipIfDaily();
   try {
     await TrackPlayer.skipToNext();
   } catch {
@@ -293,66 +355,95 @@ export async function stop() {
   useStore.getState().setIsPlaying(false);
 }
 
-export async function addToQueue(song: Song) {
-  const { queue, queueIndex, explicitQueue, autoQueue } = useStore.getState();
-  const track = _buildTrack(song, null);
+/** Cycle repeat mode: off → queue → track → off. Returns the new mode. */
+export async function cycleRepeatMode(): Promise<'off' | 'queue' | 'track'> {
+  const cur = useStore.getState().repeatMode;
+  const next = cur === 'off' ? 'queue' : cur === 'queue' ? 'track' : 'off';
+  const rntp = next === 'off' ? RepeatMode.Off : next === 'queue' ? RepeatMode.Queue : RepeatMode.Track;
+  await TrackPlayer.setRepeatMode(rntp);
+  useStore.getState().setRepeatMode(next);
+  return next;
+}
 
-  if (queue.length === 0) {
+/** Shuffle the not-yet-played remainder of the queue (Fisher–Yates via RNTP moves). */
+export async function shuffleUpcoming(): Promise<void> {
+  const idx = (await TrackPlayer.getActiveTrackIndex()) ?? 0;
+  const q = await TrackPlayer.getQueue();
+  const n = q.length;
+  if (n - (idx + 1) < 2) return;
+  for (let i = n - 1; i > idx + 1; i--) {
+    const j = idx + 1 + Math.floor(Math.random() * (i - idx));
+    if (i !== j) await TrackPlayer.move(i, j);
+  }
+  // Order changed → the explicit/auto bookkeeping no longer reflects position;
+  // keep the song sets but rebuild the visible queue mirror.
+  await syncQueueMirror();
+}
+
+export async function addToQueue(song: Song) {
+  const { explicitQueue } = useStore.getState();
+  const current = await TrackPlayer.getActiveTrack();
+
+  if (!current) {
+    // Nothing playing — start fresh with this song
     useStore.setState({ autoQueue: [] });
     await TrackPlayer.reset();
-    await TrackPlayer.add(track);
-    useStore.setState({ queue: [song], queueIndex: 0, explicitQueue: [song] });
+    await TrackPlayer.add(_buildTrack(song, null));
+    await TrackPlayer.play();
+    useStore.setState({ queue: [song], queueIndex: 0, explicitQueue: [] });
     fillAutoQueue(song.id).catch(() => {});
     return;
   }
 
-  // Remove existing auto-radio tracks from RNTP first (they'll be recalculated)
-  const insertAt = queueIndex + 1 + explicitQueue.length;
-  const oldAutoCount = autoQueue.length;
-  if (oldAutoCount > 0) {
-    const rnptQueue = await TrackPlayer.getQueue();
-    const toRemove = Array.from({ length: oldAutoCount }, (_, i) => insertAt + i)
-      .filter(i => i < rnptQueue.length);
-    if (toRemove.length > 0) await TrackPlayer.remove(toRemove);
-    useStore.setState({ autoQueue: [] });
-  }
+  // Insert after the last explicit song, or right after the current track.
+  const lastExplicit = explicitQueue[explicitQueue.length - 1];
+  let anchorIdx = lastExplicit ? await rnptIndexOf(lastExplicit.id) : -1;
+  if (anchorIdx < 0) anchorIdx = await rnptIndexOf(current.songId as string);
+  if (anchorIdx < 0) anchorIdx = (await TrackPlayer.getQueue()).length - 1;
 
-  // Insert explicit song at correct position
-  await TrackPlayer.add(track, insertAt);
-  useStore.setState(s => {
-    const newQueue = [...s.queue];
-    newQueue.splice(insertAt, 0, song);
-    return { queue: newQueue, explicitQueue: [...s.explicitQueue, song] };
-  });
+  await TrackPlayer.add(_buildTrack(song, null), anchorIdx + 1);
+  useStore.setState(s => ({ explicitQueue: [...s.explicitQueue, song] }));
+  await syncQueueMirror();
 
-  // Refill auto-queue from the new tail of the explicit queue
+  // Top up auto-radio from the new explicit tail
   fillAutoQueue(song.id).catch(() => {});
 }
 
 export async function removeFromExplicitQueue(index: number) {
-  const { queueIndex, explicitQueue } = useStore.getState();
-  if (index >= explicitQueue.length) return;
-  const rnptIdx = queueIndex + 1 + index;
-  await TrackPlayer.remove([rnptIdx]);
+  const { explicitQueue } = useStore.getState();
+  const song = explicitQueue[index];
+  if (!song) return;
+  const rnptIdx = await rnptIndexOf(song.id);
+  if (rnptIdx >= 0) await TrackPlayer.remove([rnptIdx]);
   useStore.setState(s => ({
-    queue: s.queue.filter((_, i) => i !== rnptIdx),
     explicitQueue: s.explicitQueue.filter((_, i) => i !== index),
   }));
+  await syncQueueMirror();
 }
 
 export async function moveInExplicitQueue(from: number, to: number) {
   if (from === to) return;
-  const { queueIndex } = useStore.getState();
-  const rnptFrom = queueIndex + 1 + from;
-  const rnptTo = queueIndex + 1 + to;
+  const { explicitQueue } = useStore.getState();
+  const fromSong = explicitQueue[from];
+  const toSong = explicitQueue[to];
+  if (!fromSong || !toSong) return;
+  const rnptFrom = await rnptIndexOf(fromSong.id);
+  const rnptTo = await rnptIndexOf(toSong.id);
+  if (rnptFrom < 0 || rnptTo < 0) return;
   await TrackPlayer.move(rnptFrom, rnptTo);
   useStore.setState(s => {
-    const newQueue = [...s.queue];
-    const [qItem] = newQueue.splice(rnptFrom, 1);
-    newQueue.splice(rnptTo, 0, qItem);
     const newExplicit = [...s.explicitQueue];
-    const [eItem] = newExplicit.splice(from, 1);
-    newExplicit.splice(to, 0, eItem);
-    return { queue: newQueue, explicitQueue: newExplicit };
+    const [item] = newExplicit.splice(from, 1);
+    newExplicit.splice(to, 0, item);
+    return { explicitQueue: newExplicit };
   });
+  await syncQueueMirror();
+}
+
+/** Remove an auto-radio song from the queue by id (queue sheet). */
+export async function removeAutoSong(songId: string) {
+  const rnptIdx = await rnptIndexOf(songId);
+  if (rnptIdx >= 0) await TrackPlayer.remove([rnptIdx]);
+  useStore.setState(s => ({ autoQueue: s.autoQueue.filter(a => a.id !== songId) }));
+  await syncQueueMirror();
 }

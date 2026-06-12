@@ -46,7 +46,7 @@ interface Props {
   rightAction?: React.ReactNode;
 }
 
-export function SongRow({ song, onPress, onLongPress, onSwipeQueue, hideArtist, index, status, rightAction }: Props) {
+export const SongRow = React.memo(function SongRow({ song, onPress, onLongPress, onSwipeQueue, hideArtist, index, status, rightAction }: Props) {
   const theme = useTheme();
 
   const translateX = useSharedValue(0);
@@ -137,6 +137,18 @@ export function SongRow({ song, onPress, onLongPress, onSwipeQueue, hideArtist, 
 
       {rightAction}
 
+      {!rightAction && status === 'kept' && (
+        <View style={[styles.flagBadge, { backgroundColor: theme.success ?? '#22c55e' }]}>
+          <Icon name="check" color="#fff" size={12} strokeWidth={2.5} />
+        </View>
+      )}
+
+      {!rightAction && status === 'delete' && (
+        <View style={[styles.flagBadge, { backgroundColor: theme.danger ?? '#ef4444' }]}>
+          <Icon name="close" color="#fff" size={12} strokeWidth={2.5} />
+        </View>
+      )}
+
       {!rightAction && status === undefined && song.duration_sec !== undefined && (
         <Text style={[styles.duration, { color: theme.fgSoft, fontFamily: font.mono }]}>
           {fmtTime(song.duration_sec)}
@@ -166,7 +178,7 @@ export function SongRow({ song, onPress, onLongPress, onSwipeQueue, hideArtist, 
       </GestureDetector>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   row: {
@@ -205,6 +217,14 @@ const styles = StyleSheet.create({
   duration: {
     fontSize: 11.5,
     letterSpacing: 0.04,
+  },
+  flagBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 6,
   },
   swipeContainer: {
     position: 'relative',

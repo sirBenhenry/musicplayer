@@ -1,15 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Animated, Pressable,
+  View, Text, StyleSheet, Animated, Pressable,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../hooks/useTheme';
 import { useStore } from '../../lib/store';
+import { Icon, IconName } from '../shared/Icon';
 import { font, radius } from '../../lib/tokens';
 
 interface Props {
   open: boolean;
   onClose: () => void;
+}
+
+export function profileHue(hue: number): string {
+  return `hsl(${hue}, 35%, 60%)`;
 }
 
 export function ProfileMenu({ open, onClose }: Props) {
@@ -48,23 +53,29 @@ export function ProfileMenu({ open, onClose }: Props) {
     setTimeout(() => router.push(`/${screen}` as any), 220);
   };
 
-  const items = [
+  const items: { label: string; hint: string; icon: IconName; screen: string }[] = [
     {
       label: 'Discovery history',
       hint: 'Last 30 days of daily playlists',
-      icon: '◷',
+      icon: 'history',
       screen: 'history',
+    },
+    {
+      label: 'Pending deletions',
+      hint: 'Skipped songs — rescue before midnight',
+      icon: 'trash',
+      screen: 'deletion',
     },
     {
       label: 'Manage taste profiles',
       hint: `${profiles.length} profile${profiles.length !== 1 ? 's' : ''} · ${profile?.name ?? ''} is active`,
-      icon: '◈',
-      screen: 'settings',
+      icon: 'artist',
+      screen: 'profiles',
     },
     {
       label: 'Settings',
-      hint: 'Theme, playback, daily generation',
-      icon: '⚙',
+      hint: 'Theme, server, imports, system status',
+      icon: 'settings',
       screen: 'settings',
     },
   ];
@@ -94,7 +105,7 @@ export function ProfileMenu({ open, onClose }: Props) {
 
         {/* Profile header */}
         <View style={styles.profileHeader}>
-          <View style={[styles.avatar, { backgroundColor: `oklch(70% 0.08 ${hue})` }]}>
+          <View style={[styles.avatar, { backgroundColor: profileHue(hue) }]}>
             <Text style={styles.avatarGlyph}>{profile?.glyph ?? '♪'}</Text>
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
@@ -106,15 +117,21 @@ export function ProfileMenu({ open, onClose }: Props) {
               {profile?.name ?? 'Profile'}
             </Text>
           </View>
-          <TouchableOpacity onPress={onClose} style={[styles.closeBtn, { borderColor: theme.borderSoft, backgroundColor: theme.surface }]}>
-            <Text style={{ color: theme.fgMuted, fontSize: 16, lineHeight: 18 }}>✕</Text>
-          </TouchableOpacity>
+          <Pressable
+            onPress={onClose}
+            style={({ pressed }) => [
+              styles.closeBtn,
+              { borderColor: theme.borderSoft, backgroundColor: theme.surface, opacity: pressed ? 0.6 : 1 },
+            ]}
+          >
+            <Icon name="close" color={theme.fgMuted} size={16} />
+          </Pressable>
         </View>
 
         {/* Long-press hint */}
         <View style={[styles.hint, { backgroundColor: theme.surface, borderColor: theme.borderSoft }]}>
           <View style={[styles.hintIcon, { backgroundColor: theme.accent }]}>
-            <Text style={{ fontSize: 12, color: theme.onAccent }}>⌂</Text>
+            <Icon name="home" color={theme.onAccent} size={13} strokeWidth={1.8} />
           </View>
           <Text style={[styles.hintText, { color: theme.fgMuted }]}>
             Hold the home button to switch profiles. Drag to a profile and release.
@@ -125,18 +142,19 @@ export function ProfileMenu({ open, onClose }: Props) {
         <View style={[styles.menuCard, { backgroundColor: theme.surface, borderColor: theme.borderSoft }]}>
           {items.map((item, i) => (
             <React.Fragment key={item.screen + item.label}>
-              <TouchableOpacity
-                style={styles.menuRow}
+              <Pressable
+                style={({ pressed }) => [styles.menuRow, { opacity: pressed ? 0.7 : 1 }]}
                 onPress={() => goto(item.screen)}
-                activeOpacity={0.7}
               >
-                <Text style={[styles.menuIcon, { color: theme.fgMuted }]}>{item.icon}</Text>
+                <View style={styles.menuIconWrap}>
+                  <Icon name={item.icon} color={theme.fgMuted} size={19} />
+                </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.menuLabel, { color: theme.fgStrong }]}>{item.label}</Text>
                   <Text style={[styles.menuHint, { color: theme.fgMuted }]}>{item.hint}</Text>
                 </View>
-                <Text style={{ color: theme.fgMuted, fontSize: 16 }}>›</Text>
-              </TouchableOpacity>
+                <Icon name="chevronRight" color={theme.fgMuted} size={16} />
+              </Pressable>
               {i < items.length - 1 && (
                 <View style={[styles.divider, { backgroundColor: theme.borderSoft, marginLeft: 52 }]} />
               )}
@@ -190,7 +208,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
-  avatarGlyph: { fontSize: 22 },
+  avatarGlyph: { fontSize: 22, color: '#fffdf8' },
   listeningAs: { fontSize: 9.5, letterSpacing: 0.12, marginBottom: 3 },
   profileName: { fontSize: 22, lineHeight: 26 },
   closeBtn: {
@@ -232,7 +250,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     gap: 14,
   },
-  menuIcon: { fontSize: 20, width: 22, textAlign: 'center' },
+  menuIconWrap: { width: 22, alignItems: 'center' },
   menuLabel: { fontSize: 14, fontWeight: '500', marginBottom: 2 },
   menuHint: { fontSize: 12 },
   divider: { height: StyleSheet.hairlineWidth },

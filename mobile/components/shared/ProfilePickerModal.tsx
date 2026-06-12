@@ -15,9 +15,11 @@ interface Props {
   onAssigned?: (profileName: string | null) => void;
   /** If provided, skip the API call — just return the picked profile ID. */
   onPick?: (profileId: string | null, profileName: string | null) => void;
+  /** Label for the bottom null-choice row (default: "All Music only"). */
+  noneLabel?: string;
 }
 
-export function ProfilePickerModal({ visible, songId, songTitle, currentProfileId, onClose, onAssigned, onPick }: Props) {
+export function ProfilePickerModal({ visible, songId, songTitle, currentProfileId, onClose, onAssigned, onPick, noneLabel }: Props) {
   const theme = useTheme();
   const { profiles } = useStore();
   const [saving, setSaving] = useState<string | 'none' | null>(null);
@@ -95,7 +97,7 @@ export function ProfilePickerModal({ visible, songId, songTitle, currentProfileI
             <View style={[styles.glyph, { backgroundColor: theme.bgElev }]}>
               <Text style={styles.glyphText}>🎶</Text>
             </View>
-            <Text style={[styles.rowName, { color: theme.fgMuted }]}>All Music only</Text>
+            <Text style={[styles.rowName, { color: theme.fgMuted }]}>{noneLabel ?? 'All Music only'}</Text>
             {saving === 'none'
               ? <ActivityIndicator size="small" color={theme.accent} />
               : !currentProfileId

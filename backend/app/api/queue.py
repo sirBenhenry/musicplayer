@@ -28,7 +28,7 @@ _current_index: int = 0
 _SAME_ARTIST_PENALTY = 0.30  # score penalty for same artist
 _RECENCY_HALF_LIFE_H = 4.0   # hours at which recency penalty = 0.5 * max
 _RECENCY_MAX_PENALTY = 0.55  # maximum recency penalty (for very recently played)
-_TEMPERATURE = 0.35           # softmax temperature (lower = more similar picks)
+_TEMPERATURE = 0.05           # softmax temperature — tight with 1280-dim cosine embeddings
 _SHORT_BAN_PENALTY = 10.0    # effectively infinite penalty for short-banned songs
 
 
@@ -203,8 +203,15 @@ async def _pick_next(
 
     candidates = await _query_by_vector(
         db, seed.feature_vector, profile_id if use_profile else None,
-        excluded, pool_size * 2
+        excluded, pool_size * 2, seed_mode=seed.key_mode, seed_bpm=seed.bpm
     )
+
+    # If filtered pool is too small, retry without BPM/mode filters
+    if len(candidates) < 5:
+        candidates = await _query_by_vector(
+            db, seed.feature_vector, profile_id if use_profile else None,
+            excluded, pool_size * 2
+        )
 
     if not candidates:
         return None
@@ -213,9 +220,33 @@ async def _pick_next(
     now = datetime.now(timezone.utc)
     scored: list[tuple[float, dict]] = []
 
+    seed_bpm = seed.bpm
+    seed_mode = seed.key_mode
+    seed_moods = _seed_mood_vec(seed)
+
     for c in candidates:
-        # Similarity score: convert cosine distance → similarity (0..1)
-        similarity = max(0.0, 1.0 - c.get("_dist", 0.5))
+        # Cosine distance 0-2 → similarity 0-1 (embeddings are L2-normalised)
+        cosine_sim = max(0.0, 1.0 - c.get("_dist", 1.0))
+
+        # BPM compatibility: linear falloff, 0 at ±20 BPM (null-safe)
+        bpm_compat = _bpm_compat(seed_bpm, c.get("bpm"))
+
+        # Mode match: 1.0 same, 0.5 null, 0.0 different
+        mode_compat = _mode_compat(seed_mode, c.get("key_mode"))
+
+        # Mood cosine similarity (null-safe)
+        mood_compat = _mood_compat(seed_moods, c)
+
+        # Vibe compat: beat_strength + spectral_centroid + dyn_complexity
+        vibe_compat = _vibe_compat(seed, c)
+
+        # Weighted hybrid score
+        acoustic_sim = (
+            0.50 * cosine_sim
+            + 0.20 * bpm_compat
+            + 0.15 * mode_compat
+            + 0.15 * vibe_compat
+        )
 
         # Same-artist penalty
         artist_penalty = _SAME_ARTIST_PENALTY if (
@@ -230,8 +261,7 @@ async def _pick_next(
             hours_ago = (now - last_played).total_seconds() / 3600.0
             recency_penalty = _RECENCY_MAX_PENALTY * math.exp(-hours_ago / _RECENCY_HALF_LIFE_H)
 
-        # Short-ban: already in banned_ids, but recency_map may have non-banned recent songs
-        score = similarity - artist_penalty - recency_penalty
+        score = acoustic_sim - artist_penalty - recency_penalty
         scored.append((score, c))
 
     if not scored:
@@ -242,6 +272,60 @@ async def _pick_next(
     pick = _softmax_sample(scored, scores, temperature=_TEMPERATURE)
 
     return pick
+
+
+def _bpm_compat(seed_bpm: float | None, cand_bpm: float | None) -> float:
+    """Linear BPM compatibility, 1.0 at same BPM, 0.0 at ±20 BPM difference."""
+    if seed_bpm is None or cand_bpm is None:
+        return 0.5
+    diff = abs(seed_bpm - cand_bpm)
+    # Also check half/double tempo (e.g. 120 vs 60)
+    diff_half = abs(seed_bpm - cand_bpm * 2)
+    diff_double = abs(seed_bpm * 2 - cand_bpm)
+    diff = min(diff, diff_half, diff_double)
+    return max(0.0, 1.0 - diff / 12.0)
+
+
+def _mode_compat(seed_mode: str | None, cand_mode: str | None) -> float:
+    if seed_mode is None or cand_mode is None:
+        return 0.5
+    return 1.0 if seed_mode == cand_mode else 0.0
+
+
+def _seed_mood_vec(seed) -> list[float] | None:
+    moods = [seed.mood_happy, seed.mood_sad, seed.mood_aggressive,
+             seed.mood_relaxed, seed.mood_party]
+    if all(m is None for m in moods):
+        return None
+    return [m or 0.0 for m in moods]
+
+
+def _mood_compat(seed_moods: list[float] | None, c: dict) -> float:
+    if seed_moods is None:
+        return 0.5
+    cand = [c.get("mood_happy"), c.get("mood_sad"), c.get("mood_aggressive"),
+            c.get("mood_relaxed"), c.get("mood_party")]
+    if all(m is None for m in cand):
+        return 0.5
+    import math as _math
+    c_vec = [m or 0.0 for m in cand]
+    dot = sum(a * b for a, b in zip(seed_moods, c_vec))
+    norm_s = _math.sqrt(sum(x * x for x in seed_moods)) or 1e-8
+    norm_c = _math.sqrt(sum(x * x for x in c_vec)) or 1e-8
+    return max(0.0, dot / (norm_s * norm_c))
+
+
+def _vibe_compat(seed, c: dict) -> float:
+    """beat_strength (60%) + spectral_centroid (40%). dyn_complexity excluded — saturates at 1.0."""
+    bs_s = getattr(seed, "beat_strength", None)
+    bs_c = c.get("beat_strength")
+    sc_s = getattr(seed, "spectral_centroid", None)
+    sc_c = c.get("spectral_centroid")
+    if bs_s is not None and bs_c is not None and sc_s is not None and sc_c is not None:
+        return 0.6 * max(0.0, 1.0 - abs(bs_s - bs_c)) + 0.4 * max(0.0, 1.0 - abs(sc_s - sc_c))
+    if bs_s is not None and bs_c is not None:
+        return max(0.0, 1.0 - abs(bs_s - bs_c))
+    return 0.5
 
 
 def _adaptive_params(profile_count: int) -> tuple[int, float, int]:
@@ -305,6 +389,8 @@ async def _query_by_vector(
     profile_id: str | None,
     excluded_ids: set[str],
     limit: int,
+    seed_mode: str | None = None,
+    seed_bpm: float | None = None,
 ) -> list[dict]:
     import uuid as _uuid
 
@@ -319,14 +405,20 @@ async def _query_by_vector(
             s.id::text, s.navidrome_id, s.title,
             s.artist_id::text, s.album_id::text, s.duration_sec,
             s.display_artist, a.name AS artist_name,
-            s.feature_vector <=> CAST(:vec AS vector) AS _dist
+            s.feature_vector <=> CAST(:vec AS vector) AS _dist,
+            s.bpm, s.key_mode,
+            s.mood_happy, s.mood_sad, s.mood_aggressive, s.mood_relaxed, s.mood_party,
+            s.beat_strength, s.spectral_centroid, s.dyn_complexity
         FROM songs s
         LEFT JOIN artists a ON a.id = s.artist_id
         WHERE s.id::text != ALL(:excluded)
           AND s.analysed_at IS NOT NULL
           AND s.feature_vector IS NOT NULL
+          AND s.is_staged = FALSE
     """
     params: dict[str, Any] = {"vec": vec_str, "excluded": excl_list}
+    if seed_bpm is not None:
+        params["seed_bpm"] = seed_bpm
 
     if profile_id:
         try:
@@ -335,6 +427,24 @@ async def _query_by_vector(
             params["pid"] = pid
         except ValueError:
             pass
+
+    if seed_mode in ("major", "minor"):
+        base_q += " AND (s.key_mode = :seed_mode OR s.key_mode IS NULL)"
+        params["seed_mode"] = seed_mode
+
+    if seed_mode is not None and "seed_bpm" in params:
+        sbpm = params["seed_bpm"]
+        base_q += (
+            " AND (s.bpm IS NULL"
+            " OR (s.bpm BETWEEN :bpm_min AND :bpm_max)"
+            " OR (s.bpm BETWEEN :bpm_half_min AND :bpm_half_max)"
+            " OR (s.bpm BETWEEN :bpm_dbl_min AND :bpm_dbl_max))"
+        )
+        params.update({
+            "bpm_min": sbpm * 0.80, "bpm_max": sbpm * 1.20,
+            "bpm_half_min": sbpm * 0.40, "bpm_half_max": sbpm * 0.60,
+            "bpm_dbl_min": sbpm * 1.60, "bpm_dbl_max": sbpm * 2.40,
+        })
 
     base_q += f" ORDER BY _dist LIMIT {limit}"
 
@@ -379,7 +489,7 @@ async def _query_random(
 
 
 def _row_to_candidate(row) -> dict:
-    artist_name = row[7] or row[6] or ""  # artist_name from JOIN, fallback display_artist
+    artist_name = row[7] or row[6] or ""
     return {
         "id": row[0],
         "navidrome_id": row[1],
@@ -390,6 +500,16 @@ def _row_to_candidate(row) -> dict:
         "artist": artist_name,
         "artist_name": artist_name,
         "_dist": float(row[8]),
+        "bpm": float(row[9]) if row[9] is not None else None,
+        "key_mode": row[10],
+        "mood_happy": float(row[11]) if row[11] is not None else None,
+        "mood_sad": float(row[12]) if row[12] is not None else None,
+        "mood_aggressive": float(row[13]) if row[13] is not None else None,
+        "mood_relaxed": float(row[14]) if row[14] is not None else None,
+        "mood_party": float(row[15]) if row[15] is not None else None,
+        "beat_strength": float(row[16]) if row[16] is not None else None,
+        "spectral_centroid": float(row[17]) if row[17] is not None else None,
+        "dyn_complexity": float(row[18]) if row[18] is not None else None,
     }
 
 

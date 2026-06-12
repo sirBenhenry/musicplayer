@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, FlatList, Pressable, StyleSheet, Alert } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,17 +14,20 @@ import { TextInputModal } from '../../components/shared/TextInputModal';
 import {
   getSongs, getArtists, getPlaylists, getUserPlaylists, createUserPlaylist,
   deleteUserPlaylist, getStreamUrl, getCoverUrl, importSpotifyPlaylist,
+  getLibraryStamp,
 } from '../../lib/api';
 import { playSong, addToQueue } from '../../lib/audio';
+import { libraryCache } from '../../lib/libraryCache';
+import { appendLog, flushNow } from '../../lib/logger';
 import { font, radius } from '../../lib/tokens';
 
 type Tab = 'Songs' | 'Artists' | 'Playlists';
 
 const SLOT_LABEL: Record<string, string> = {
-  close_match: 'Close Match',
-  broader_taste: 'Broader Taste',
-  new_genre: 'New Genre',
-  artist_of_day: 'Artist of the Day',
+  close: 'Close Match',
+  broader: 'Broader Taste',
+  genre: 'New Genre',
+  artist: 'Artist of the Day',
 };
 
 export default function LibraryScreen() {
@@ -38,12 +41,18 @@ export default function LibraryScreen() {
 
   const [tab, setTab] = useState<Tab>('Songs');
   const [searchQuery, setSearchQuery] = useState('');
-  const [songs, setSongs] = useState<any[]>([]);
-  const [artists, setArtists] = useState<any[]>([]);
-  const [profileArtists, setProfileArtists] = useState<any[]>([]);
+
+  // Single source of truth for library data — all songs + all artists
+  const [allSongs, setAllSongs] = useState<any[]>([]);
+  const [allArtists, setAllArtists] = useState<any[]>([]);
   const [dailyPlaylists, setDailyPlaylists] = useState<any[]>([]);
   const [userPlaylists, setUserPlaylists] = useState<any[]>([]);
+
+  // Profile filter toggle (user can override)
   const [filterProfile, setFilterProfile] = useState(!isCatchall);
+
+  // True once we have at least some data (cache or fresh) so we never show a blank flash
+  const [ready, setReady] = useState(false);
 
   const [actionSong, setActionSong] = useState<{ id: string; title: string; profile_id?: string | null } | null>(null);
   const [pickerSong, setPickerSong] = useState<{ id: string; title: string } | null>(null);
@@ -53,44 +62,230 @@ export default function LibraryScreen() {
   const [spotifyImporting, setSpotifyImporting] = useState(false);
   const [pendingSpotifyUrl, setPendingSpotifyUrl] = useState<string | null>(null);
 
+  // ── Derived state ─────────────────────────────────────────────────────────
+
+  const sq = searchQuery.toLowerCase();
+
+  // Pre-map songs once when raw data changes (stable refs for SongRow React.memo)
+  const displaySongs = useMemo(() => {
+    const base = filterProfile && activeProfileId && !isCatchall
+      ? allSongs.filter(s => s.profile_id === activeProfileId)
+      : allSongs;
+    return base.map(s => ({
+      ...s,
+      artist: s.artist_name ?? '',
+      duration_sec: s.duration_sec ?? 0,
+      cover_url: getCoverUrl(s.navidrome_id),
+    }));
+  }, [allSongs, filterProfile, activeProfileId, isCatchall]);
+
+  const filteredSongs = useMemo(
+    () => sq
+      ? displaySongs.filter(s =>
+          s.title?.toLowerCase().includes(sq) ||
+          (s.artist_name ?? '').toLowerCase().includes(sq))
+      : displaySongs,
+    [displaySongs, sq],
+  );
+
+  // Stable ref so onPress closure always has current list
+  const filteredSongsRef = useRef(filteredSongs);
+  useEffect(() => { filteredSongsRef.current = filteredSongs; }, [filteredSongs]);
+
+  // Derive followed artists + profile artists from allArtists + allSongs
+  // Artist names with songs in this profile (used to scope followed artists per-profile)
+  const profileArtistNames = useMemo(() => {
+    if (!filterProfile || !activeProfileId || isCatchall) return null; // null = no filter
+    return new Set(
+      allSongs
+        .filter(s => s.profile_id === activeProfileId)
+        .map(s => (s.display_artist || s.artist_name || '').toLowerCase())
+        .filter(Boolean),
+    );
+  }, [allSongs, filterProfile, activeProfileId, isCatchall]);
+
+  // Section 1: Following = followed + monitored (lidarr_id set)
+  // When profile filter active, only show artists who have songs in this profile
+  const followingArtists = useMemo(
+    () => allArtists.filter(a =>
+      a.followed && a.monitored &&
+      (profileArtistNames === null || profileArtistNames.has((a.name || '').toLowerCase()))
+    ),
+    [allArtists, profileArtistNames],
+  );
+
+  // Section 2: Added = followed but not monitored
+  const addedArtists = useMemo(
+    () => allArtists.filter(a =>
+      a.followed && !a.monitored &&
+      (profileArtistNames === null || profileArtistNames.has((a.name || '').toLowerCase()))
+    ),
+    [allArtists, profileArtistNames],
+  );
+
+  // Section 3: Implicit = not explicitly followed, but have songs in the active profile
+  // Songs don't expose artist_id in the API — match by artist_name/display_artist instead
+  const implicitArtists = useMemo(() => {
+    if (!filterProfile || !activeProfileId || isCatchall) return [];
+    const profileSongArtistNames = new Set(
+      allSongs
+        .filter(s => s.profile_id === activeProfileId)
+        .map(s => (s.display_artist || s.artist_name || '').toLowerCase())
+        .filter(Boolean),
+    );
+    const followedIds = new Set(allArtists.filter(a => a.followed).map(a => String(a.id)));
+    return allArtists.filter(
+      a => profileSongArtistNames.has((a.name || '').toLowerCase()) && !followedIds.has(String(a.id)),
+    );
+  }, [allSongs, allArtists, filterProfile, activeProfileId, isCatchall]);
+
+  const filteredFollowing = sq
+    ? followingArtists.filter(a => a.name?.toLowerCase().includes(sq))
+    : followingArtists;
+  const filteredAdded = sq
+    ? addedArtists.filter(a => a.name?.toLowerCase().includes(sq))
+    : addedArtists;
+  const filteredImplicit = sq
+    ? implicitArtists.filter(a => a.name?.toLowerCase().includes(sq))
+    : implicitArtists;
+
+  const artistItems: any[] = [];
+  if (!isCatchall) {
+    if (filteredFollowing.length > 0) {
+      artistItems.push({ _type: 'artist_sec', label: 'Following' });
+      for (const a of filteredFollowing) artistItems.push({ _type: 'artist_row', ...a });
+    }
+    if (filteredAdded.length > 0) {
+      artistItems.push({ _type: 'artist_sec', label: 'Added' });
+      for (const a of filteredAdded) artistItems.push({ _type: 'artist_row', ...a });
+    }
+    if (filteredImplicit.length > 0) {
+      artistItems.push({ _type: 'artist_sec', label: activeProfile?.name ?? 'This Profile' });
+      for (const a of filteredImplicit) artistItems.push({ _type: 'artist_row', ...a });
+    }
+    if (artistItems.length === 0) {
+      artistItems.push({ _type: 'artist_empty', message: sq ? 'No matching artists' : 'No artists in this profile yet.' });
+    }
+  } else {
+    // Catchall: flat list of all artists
+    const allFiltered = sq ? allArtists.filter(a => a.name?.toLowerCase().includes(sq)) : allArtists;
+    if (allFiltered.length === 0) {
+      artistItems.push({ _type: 'artist_empty', message: sq ? 'No matching artists' : 'No artists yet.' });
+    } else {
+      for (const a of allFiltered) artistItems.push({ _type: 'artist_row', ...a });
+    }
+  }
+
+  const filteredUserPlaylists = sq
+    ? userPlaylists.filter(p => p.name?.toLowerCase().includes(sq))
+    : userPlaylists;
+  const filteredDailyPlaylists = sq
+    ? dailyPlaylists.filter(p => p.slot?.toLowerCase().includes(sq) || p.date?.includes(sq))
+    : dailyPlaylists;
+
+  // ── Data loading ──────────────────────────────────────────────────────────
+
   const loadUserPlaylists = () =>
     getUserPlaylists().then(setUserPlaylists).catch(() => {});
 
-  // Profile change: use isCatchall directly to avoid stale filterProfile race
+  // Load cache immediately, then check stamp and refresh in background
   useEffect(() => {
-    const fp = !isCatchall;
-    setFilterProfile(fp);
-    getSongs(fp && activeProfileId
-      ? { profile: activeProfileId, limit: '5000' }
-      : { limit: '5000' }
-    ).then(setSongs).catch(() => {});
-    getArtists({ followed: 'true' }).then(setArtists).catch(() => {});
-    if (fp && activeProfileId) {
-      getArtists({ profile_id: activeProfileId }).then(setProfileArtists).catch(() => {});
-    } else {
-      setProfileArtists([]);
+    let alive = true;
+
+    async function init() {
+      try {
+        appendLog('[Library] init start');
+        const [cs, ca] = await Promise.all([
+          libraryCache.loadSongs(),
+          libraryCache.loadArtists(),
+        ]);
+        appendLog(`[Library] cache loaded: ${cs.length} songs, ${ca.length} artists`);
+        if (!alive) return;
+        if (cs.length) setAllSongs(cs);
+        if (ca.length) setAllArtists(ca);
+        if (cs.length || ca.length) setReady(true);
+
+        await refreshIfStale(alive);
+        if (alive) setReady(true);
+        appendLog('[Library] init complete');
+      } catch (e: any) {
+        appendLog(`[Library] init ERROR: ${e?.message}\n${e?.stack ?? ''}`);
+        flushNow();
+      }
     }
+
+    init();
+    return () => { alive = false; };
+  }, []);
+
+  // Background stamp poll every 15s
+  useEffect(() => {
+    const id = setInterval(() => refreshIfStale(), 15000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Profile switch: reset filter, reload playlists (songs now client-side)
+  useEffect(() => {
+    setFilterProfile(!isCatchall);
     getPlaylists(activeProfileId ?? undefined).then(setDailyPlaylists).catch(() => {});
     loadUserPlaylists();
   }, [activeProfileId]);
 
-  // Manual filter toggle
-  useEffect(() => {
-    getSongs(filterProfile && activeProfileId
-      ? { profile: activeProfileId, limit: '5000' }
-      : { limit: '5000' }
-    ).then(setSongs).catch(() => {});
-  }, [filterProfile]);
-
-  // Refresh artists when returning from artist detail page
+  // Refresh artists + playlists on focus (follow/unfollow, new daily playlists, renames)
   useFocusEffect(useCallback(() => {
-    getArtists({ followed: 'true' }).then(setArtists).catch(() => {});
-    if (!isCatchall && activeProfileId) {
-      getArtists({ profile_id: activeProfileId }).then(setProfileArtists).catch(() => {});
-    } else {
-      setProfileArtists([]);
-    }
-  }, [activeProfileId, isCatchall]));
+    getArtists().then(all => {
+      setAllArtists(all);
+      libraryCache.saveArtists(all);
+    }).catch(() => {});
+    getPlaylists(activeProfileId ?? undefined).then(setDailyPlaylists).catch(() => {});
+    loadUserPlaylists();
+  }, [activeProfileId]));
+
+  async function refreshIfStale(alive = true) {
+    try {
+      const [serverStamp, cachedStamp] = await Promise.all([
+        getLibraryStamp().catch(() => null),
+        libraryCache.getStamp(),
+      ]);
+      // Stamp unreachable (offline / server down) → can't tell, do nothing this
+      // tick instead of hammering the full-library endpoint every 15 s.
+      if (!serverStamp) return;
+      const stale = serverStamp.updated_at !== cachedStamp;
+      if (!stale) return;
+
+      const [freshSongs, freshArtists] = await Promise.all([
+        getSongs({ limit: '5000' }),
+        getArtists(),
+      ]);
+      if (!alive) return;
+
+      setAllSongs(freshSongs);
+      setAllArtists(freshArtists);
+      await Promise.all([
+        libraryCache.saveSongs(freshSongs),
+        libraryCache.saveArtists(freshArtists),
+        serverStamp ? libraryCache.saveStamp(serverStamp.updated_at) : Promise.resolve(),
+      ]);
+    } catch {}
+  }
+
+  // Force immediate refresh (after local mutations)
+  async function forceRefresh() {
+    try {
+      const [freshSongs, freshArtists, serverStamp] = await Promise.all([
+        getSongs({ limit: '5000' }),
+        getArtists(),
+        getLibraryStamp().catch(() => null),
+      ]);
+      setAllSongs(freshSongs);
+      setAllArtists(freshArtists);
+      await Promise.all([
+        libraryCache.saveSongs(freshSongs),
+        libraryCache.saveArtists(freshArtists),
+        serverStamp ? libraryCache.saveStamp(serverStamp.updated_at) : Promise.resolve(),
+      ]);
+    } catch {}
+  }
 
   const handleDeleteUserPlaylist = (id: string, name: string) => {
     Alert.alert('Delete playlist', `Delete "${name}"?`, [
@@ -103,42 +298,7 @@ export default function LibraryScreen() {
     ]);
   };
 
-  const sq = searchQuery.toLowerCase();
-  const filteredSongs = sq
-    ? songs.filter(s => s.title?.toLowerCase().includes(sq) || (s.artist_name ?? '').toLowerCase().includes(sq))
-    : songs;
-  const filteredArtists = sq
-    ? artists.filter(a => a.name?.toLowerCase().includes(sq))
-    : artists;
-  const followedIds = new Set(artists.map((a: any) => a.id));
-  const implicitArtists = profileArtists.filter((a: any) => !followedIds.has(a.id));
-  const filteredImplicit = sq
-    ? implicitArtists.filter((a: any) => a.name?.toLowerCase().includes(sq))
-    : implicitArtists;
-
-  const showArtistSections = !isCatchall && filteredImplicit.length > 0;
-  const artistItems: any[] = [];
-  if (showArtistSections) {
-    if (filteredArtists.length > 0) {
-      artistItems.push({ _type: 'artist_sec', label: 'Following' });
-      for (const a of filteredArtists) artistItems.push({ _type: 'artist_row', ...a });
-    }
-    artistItems.push({ _type: 'artist_sec', label: activeProfile?.name ?? 'This Profile' });
-    for (const a of filteredImplicit) artistItems.push({ _type: 'artist_row', ...a });
-  } else {
-    if (filteredArtists.length === 0) {
-      artistItems.push({ _type: 'artist_empty', message: sq ? 'No matching artists' : 'No followed artists yet.' });
-    } else {
-      for (const a of filteredArtists) artistItems.push({ _type: 'artist_row', ...a });
-    }
-  }
-
-  const filteredUserPlaylists = sq
-    ? userPlaylists.filter(p => p.name?.toLowerCase().includes(sq))
-    : userPlaylists;
-  const filteredDailyPlaylists = sq
-    ? dailyPlaylists.filter(p => p.slot?.toLowerCase().includes(sq) || p.date?.includes(sq))
-    : dailyPlaylists;
+  // ── Render ────────────────────────────────────────────────────────────────
 
   const TABS: Tab[] = ['Songs', 'Artists', 'Playlists'];
 
@@ -193,7 +353,11 @@ export default function LibraryScreen() {
       <View style={styles.tabRow}>
         {TABS.map((t) => {
           const active = tab === t;
-          const count = t === 'Songs' ? filteredSongs.length : t === 'Artists' ? filteredArtists.length + filteredImplicit.length : filteredUserPlaylists.length + filteredDailyPlaylists.length;
+          const count = t === 'Songs'
+            ? filteredSongs.length
+            : t === 'Artists'
+              ? filteredFollowing.length + filteredAdded.length + filteredImplicit.length
+              : filteredUserPlaylists.length + filteredDailyPlaylists.length;
           return (
             <Pressable
               key={t}
@@ -263,24 +427,18 @@ export default function LibraryScreen() {
           keyExtractor={(s) => s.id}
           renderItem={({ item, index }) => (
             <SongRow
-              song={{ ...item, artist: item.artist_name ?? '', display_artist: item.display_artist, cover_url: getCoverUrl(item.navidrome_id) }}
+              song={item}
               onPress={() => {
-                const url = getStreamUrl(item.navidrome_id);
-                useStore.getState().setQueue(
-                  filteredSongs.map((s) => ({
-                    ...s,
-                    artist: s.artist_name ?? '',
-                    duration_sec: s.duration_sec ?? 0,
-                  })),
-                  index,
-                );
-                playSong({ ...item, artist: item.artist_name ?? '', duration_sec: item.duration_sec ?? 0 }, url, null);
+                playSong(item, getStreamUrl(item.navidrome_id), null, filteredSongsRef.current);
               }}
               onLongPress={() => setActionSong({ id: item.id, title: item.title, profile_id: item.profile_id })}
-              onSwipeQueue={() => addToQueue({ ...item, artist: item.artist_name ?? '', duration_sec: item.duration_sec ?? 0 })}
             />
           )}
           contentContainerStyle={{ paddingBottom: 160 }}
+          removeClippedSubviews
+          maxToRenderPerBatch={12}
+          windowSize={8}
+          initialNumToRender={15}
         />
       )}
 
@@ -323,7 +481,7 @@ export default function LibraryScreen() {
                     )}
                   </View>
                   <Text style={[styles.artistMeta, { color: theme.fgMuted }]}>
-                    {item.followed ? 'Following' : ''}
+                    {item.followed && item.monitored ? 'Following' : item.followed ? 'Added' : ''}
                   </Text>
                 </View>
                 <Icon name="chevronRight" color={theme.fgSoft} size={18} />
@@ -430,7 +588,12 @@ export default function LibraryScreen() {
         onAddToPlaylist={() => setPickerSong(actionSong)}
         onAssignProfile={() => setProfilePickerSong(actionSong)}
         onDeleted={() => {
-          setSongs(prev => prev.filter(s => s.id !== actionSong?.id));
+          // Optimistic remove
+          const id = actionSong?.id;
+          setAllSongs(prev => prev.filter(s => s.id !== id));
+          setActionSong(null);
+          // Sync cache in background
+          forceRefresh();
         }}
       />
 
@@ -454,9 +617,9 @@ export default function LibraryScreen() {
         onAssigned={(profileName) => {
           if (profileName) Alert.alert('Assigned', `Moved to "${profileName}"`);
           else Alert.alert('Unassigned', 'Song moved to All Music only');
-          setSongs(prev => prev.filter(s =>
-            !filterProfile || s.id !== profilePickerSong?.id
-          ));
+          setProfilePickerSong(null);
+          // Refresh so profile_id updates are reflected in client-side filter
+          forceRefresh();
         }}
       />
 

@@ -1,15 +1,17 @@
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 log = logging.getLogger(__name__)
 from pydantic import BaseModel
 from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload, defer as sa_defer
 
 from ..core.auth import require_auth
 from ..core.database import get_db
@@ -17,6 +19,14 @@ from ..models.library import Artist, Album, Song
 from ..services import navidrome
 
 router = APIRouter(tags=["library"], dependencies=[Depends(require_auth)])
+
+# ── Library stamp — updated on any mutation so mobile knows when to refresh ───
+_library_stamp: datetime = datetime.now(timezone.utc)
+
+
+def bump_library_stamp() -> None:
+    global _library_stamp
+    _library_stamp = datetime.now(timezone.utc)
 
 # Unauthenticated router for media proxy endpoints (stream + cover art)
 stream_router = APIRouter(tags=["stream"])
@@ -48,17 +58,20 @@ async def stream_audio(navidrome_id: str):
     return StreamingResponse(_gen(), media_type=content_type)
 
 
+_NAVIDROME_DEFAULT_COVER_SIZE = 69228  # blue vinyl placeholder — same hash for all missing covers
+
 @stream_router.get("/cover/{navidrome_id}")
 async def cover_art(navidrome_id: str):
     url = navidrome.cover_art_url(navidrome_id)
-
-    async def _gen():
-        async with httpx.AsyncClient(timeout=30) as client:
-            async with client.stream("GET", url) as r:
-                async for chunk in r.aiter_bytes(chunk_size=32768):
-                    yield chunk
-
-    return StreamingResponse(_gen(), media_type="image/jpeg")
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(url)
+    if len(r.content) == _NAVIDROME_DEFAULT_COVER_SIZE:
+        raise HTTPException(404, "No cover art")
+    return Response(
+        content=r.content,
+        media_type=r.headers.get("content-type", "image/jpeg"),
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -89,6 +102,7 @@ class SongOut(BaseModel):
     title_romanized: Optional[str] = None
     duration_sec: Optional[int]
     profile_id: Optional[uuid.UUID]
+    artist_id: Optional[uuid.UUID] = None
     needs_profile_assignment: bool
     artist_name: Optional[str] = None
     display_artist: Optional[str] = None
@@ -108,7 +122,11 @@ async def list_songs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
 ):
-    q = select(Song)
+    q = select(Song).options(
+        sa_defer(Song.feature_vector),  # skip 1280-float vector — not needed here
+        selectinload(Song.artist),
+        selectinload(Song.album),
+    ).where(Song.is_staged == False)  # noqa: E712 — staged songs invisible until playlist processed
     if profile:
         from ..models.profile import Profile as _Profile
         prof = await db.get(_Profile, profile)
@@ -127,26 +145,25 @@ async def list_songs(
     result = await db.execute(q)
     songs = result.scalars().all()
 
-    out = []
-    for s in songs:
-        artist_name = None
-        album_title = None
-        if s.artist_id:
-            ar = await db.get(Artist, s.artist_id)
-            artist_name = ar.name if ar else None
-        if s.album_id:
-            al = await db.get(Album, s.album_id)
-            album_title = al.title if al else None
-        out.append(SongOut(
+    return [
+        SongOut(
             id=s.id, navidrome_id=s.navidrome_id, title=s.title,
             title_romanized=s.title_romanized,
             duration_sec=s.duration_sec, profile_id=s.profile_id,
+            artist_id=s.artist_id,
             needs_profile_assignment=s.needs_profile_assignment,
-            artist_name=artist_name,
+            artist_name=s.artist.name if s.artist else None,
             display_artist=s.display_artist,
-            album_title=album_title,
-        ))
-    return out
+            album_title=s.album.title if s.album else None,
+        )
+        for s in songs
+    ]
+
+
+@router.get("/songs/stamp")
+async def songs_stamp() -> dict:
+    """Returns timestamp of last library change. Mobile polls this to know when to refresh."""
+    return {"updated_at": _library_stamp.isoformat()}
 
 
 @router.get("/songs/{song_id}", response_model=SongOut)
@@ -174,6 +191,7 @@ async def delete_song(song_id: uuid.UUID, db: Annotated[AsyncSession, Depends(ge
                 log.warning("delete_song: file remove failed %s: %s", abs_path, e)
     await db.delete(s)
     await db.commit()
+    bump_library_stamp()
     asyncio.create_task(navidrome.trigger_scan())
 
 
@@ -193,6 +211,7 @@ async def set_song_profile(
     s.profile_id = uuid.UUID(body.profile_id) if body.profile_id else None
     s.needs_profile_assignment = False
     await db.commit()
+    bump_library_stamp()
     return {"ok": True}
 
 
@@ -429,6 +448,7 @@ async def add_artist(
         raise HTTPException(404, "Artist not found")
     a.followed = True
     await db.commit()
+    bump_library_stamp()
 
 
 @router.post("/artists/{artist_id}/follow", status_code=204)
@@ -446,6 +466,7 @@ async def follow_artist(
         if lidarr_id:
             a.lidarr_id = lidarr_id
     await db.commit()
+    bump_library_stamp()
 
 
 @router.delete("/artists/{artist_id}/follow", status_code=204)
@@ -462,6 +483,7 @@ async def unfollow_artist(
         await remove_artist_from_lidarr(a.lidarr_id)
         a.lidarr_id = None
     await db.commit()
+    bump_library_stamp()
 
 
 @router.get("/albums", response_model=list[AlbumOut])

@@ -117,6 +117,7 @@ async def run_library_sync() -> dict:
                     rom = _romanize(s["title"])
                     # Song-level artist (may differ from album artist for feat. tracks)
                     song_display_artist = s.get("displayArtist") or s.get("artist") or None
+                    mb_rec_id = s.get("musicBrainzId") or None
                     stmt = pg_insert(Song).values(
                         navidrome_id=s["id"],
                         title=s["title"],
@@ -126,6 +127,7 @@ async def run_library_sync() -> dict:
                         album_id=db_album.id if db_album else None,
                         duration_sec=s.get("duration"),
                         file_path=s.get("path"),
+                        mb_recording_id=mb_rec_id,
                         added_at=datetime.now(timezone.utc),
                         updated_at=datetime.now(timezone.utc),
                     ).on_conflict_do_update(
@@ -140,6 +142,7 @@ async def run_library_sync() -> dict:
                             "album_id": db_album.id if db_album else None,
                             "duration_sec": s.get("duration"),
                             "file_path": s.get("path"),
+                            "mb_recording_id": sa_func.coalesce(Song.__table__.c.mb_recording_id, mb_rec_id),
                             "updated_at": datetime.now(timezone.utc),
                         },
                     )
@@ -161,4 +164,6 @@ async def run_library_sync() -> dict:
                 counts["removed"] = len(stale)
 
     log.info("Library sync complete: %s", counts)
+    from ..api.library import bump_library_stamp
+    bump_library_stamp()
     return counts

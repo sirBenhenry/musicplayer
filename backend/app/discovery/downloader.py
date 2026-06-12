@@ -1,61 +1,58 @@
-"""Prowlarr → qBittorrent download dispatcher."""
-import logging
-import uuid
-from datetime import datetime, timezone
+"""Queue discovery playlist tracks for download via the full pipeline.
 
-from sqlalchemy import insert, select
-from sqlalchemy.ext.asyncio import AsyncSession
+Resolves each track to a MusicBrainz recording ID before queuing so the
+pipeline has an exact identity anchor rather than a fuzzy artist+title guess.
+"""
+import asyncio
+import logging
+import uuid as _uuid
 
 from ..core.database import AsyncSessionLocal
-from ..models.events import DownloadJob
-from ..services import prowlarr, qbittorrent
-from ..core.config import get_settings
+from ..services.download_pipeline import request_download
+from ..services.mb_resolver import resolve_recording
 
-settings = get_settings()
 log = logging.getLogger(__name__)
+
+_MB_RATE_DELAY = 1.1  # seconds between MB API calls (rate limit: 1 req/sec)
 
 
 async def queue_downloads(tracklist: list[dict], playlist_id: str | None = None) -> None:
-    """Search Prowlarr and send to qBittorrent for each track in tracklist.
+    """Queue each track through the full multi-source download pipeline.
 
-    Each track dict: {artist, title, navidrome_id?, ...}
+    For each track that has no mb_recording_id, queries MusicBrainz first to
+    resolve a confident recording ID (score ≥ 80).  Tracks that don't resolve
+    still get queued — the pipeline falls back to fuzzy MB search internally.
+
+    Skips tracks already in library (dedup handled by request_download).
+    playlist_id here is a daily_playlist FK — passed as playlist_id kwarg.
     """
+    pl_id = _uuid.UUID(playlist_id) if playlist_id else None
+    first_mb_call = True
+
     async with AsyncSessionLocal() as db:
         for track in tracklist:
-            artist = track.get("artist", "")
-            title = track.get("title", "")
+            artist = (track.get("artist") or "").strip()
+            title = (track.get("title") or "").strip()
             if not artist or not title:
                 continue
 
-            results = await prowlarr.search(f"{artist} {title}")
-            if not results:
-                log.info("No Prowlarr results for '%s - %s'", artist, title)
-                continue
+            # Resolve to MB recording ID for exact identity matching in scoring.
+            # Tracks that already carry an mb_recording_id (e.g. from MCP or import)
+            # skip the lookup entirely.
+            mb_id: str | None = track.get("mb_recording_id") or None
+            if not mb_id:
+                if not first_mb_call:
+                    await asyncio.sleep(_MB_RATE_DELAY)
+                mb_id = await resolve_recording(artist, title)
+                first_mb_call = False
 
-            best = prowlarr.pick_best_result(results)
-            if not best:
-                continue
-
-            magnet = best.get("magnetUrl") or best.get("downloadUrl")
-            if not magnet:
-                log.warning("No magnet/URL for '%s - %s'", artist, title)
-                continue
-
-            qb_hash = await qbittorrent.add_torrent(
-                magnet,
-                category="music",
-                save_path=settings.DOWNLOADS_DIR,
-            )
-            if qb_hash:
-                await db.execute(insert(DownloadJob).values(
-                    id=str(uuid.uuid4()),
-                    artist=artist,
-                    title=title,
-                    qb_hash=qb_hash,
-                    status="queued",
-                    playlist_id=playlist_id,
-                    created_at=datetime.now(timezone.utc),
-                ))
-                log.info("Queued download: %s - %s (hash=%s)", artist, title, qb_hash)
+            try:
+                await request_download(
+                    db, "track", artist, title,
+                    mb_recording_id=mb_id,
+                    playlist_id=pl_id,
+                )
+            except Exception as exc:
+                log.error("queue_downloads: failed to queue '%s - %s': %s", artist, title, exc)
 
         await db.commit()

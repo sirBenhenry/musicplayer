@@ -45,27 +45,23 @@ async def search(job) -> list[Candidate]:
     query = f"{job.artist} - {getattr(job, 'search_title', job.title)}"
     candidates: list[Candidate] = []
 
-    def _flat_search(search_prefix: str) -> list[dict]:
+    def _flat_search(url: str, label: str) -> list[dict]:
         opts = {
             "quiet": True,
             "no_warnings": True,
             "extract_flat": True,
-            "default_search": search_prefix,
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(f"{search_prefix}{_SEARCH_RESULTS}:{query}", download=False)
+                info = ydl.extract_info(url, download=False)
                 return info.get("entries", []) if info else []
         except Exception as e:
-            log.warning("youtube: flat search failed (%s): %s", search_prefix, e)
+            log.warning("youtube: flat search failed (%s): %s", label, e)
             return []
 
-    # Try YouTube Music first, then plain YouTube
-    entries = await asyncio.to_thread(_flat_search, "ytmsearch")
-    source_label = "youtube_music"
-    if not entries:
-        entries = await asyncio.to_thread(_flat_search, "ytsearch")
-        source_label = "youtube"
+    # ytsearch is the stable search prefix across all yt-dlp versions
+    entries = await asyncio.to_thread(_flat_search, f"ytsearch{_SEARCH_RESULTS}:{query}", "ytsearch")
+    source_label = "youtube"
 
     for entry in entries:
         video_id = entry.get("id") or entry.get("url") or ""

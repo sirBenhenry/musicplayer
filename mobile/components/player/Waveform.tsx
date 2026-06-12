@@ -3,19 +3,19 @@ import { View } from 'react-native';
 import Svg, { Rect } from 'react-native-svg';
 import { useTheme } from '../../hooks/useTheme';
 
-const BAR_COUNT = 54;
 const BAR_WIDTH = 1.5;
 const BAR_GAP = 1.5;
+const DEFAULT_BAR_COUNT = 54;
 
-function seededHeights(seed: string): number[] {
+function seededHeights(seed: string, count: number): number[] {
   let h = 0;
   for (let i = 0; i < seed.length; i++) {
     h = (Math.imul(31, h) + seed.charCodeAt(i)) | 0;
   }
-  return Array.from({ length: BAR_COUNT }, (_, i) => {
+  return Array.from({ length: count }, (_, i) => {
     h = (Math.imul(1664525, h) + 1013904223) | 0;
     const n = (h >>> 0) / 0xffffffff;
-    return 0.15 + 0.85 * Math.pow(Math.sin((i / BAR_COUNT) * Math.PI) * 0.6 + 0.4 + n * 0.4, 1.2);
+    return 0.15 + 0.85 * Math.pow(Math.sin((i / count) * Math.PI) * 0.6 + 0.4 + n * 0.4, 1.2);
   });
 }
 
@@ -23,14 +23,18 @@ interface Props {
   songId: string;
   progress: number;
   height?: number;
-  onScrub?: (pct: number) => void;
+  /** Optional target width — bar count derives from it (mini player uses the 54-bar default). */
+  width?: number;
 }
 
-export function Waveform({ songId, progress, height = 32 }: Props) {
+export function Waveform({ songId, progress, height = 32, width }: Props) {
   const theme = useTheme();
-  const heights = useMemo(() => seededHeights(songId), [songId]);
-  const totalWidth = BAR_COUNT * (BAR_WIDTH + BAR_GAP) - BAR_GAP;
-  const playedBars = Math.floor(progress * BAR_COUNT);
+  const barCount = width
+    ? Math.max(16, Math.floor((width + BAR_GAP) / (BAR_WIDTH + BAR_GAP)))
+    : DEFAULT_BAR_COUNT;
+  const heights = useMemo(() => seededHeights(songId, barCount), [songId, barCount]);
+  const totalWidth = barCount * (BAR_WIDTH + BAR_GAP) - BAR_GAP;
+  const playedBars = Math.floor(progress * barCount);
 
   return (
     <View style={{ height, justifyContent: 'center' }}>

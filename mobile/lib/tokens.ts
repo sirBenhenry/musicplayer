@@ -17,6 +17,9 @@ export const light = {
   accentTint: '#f0d6c7',
   accentBg: '#f6e4d7',
   onAccent: '#fff8f2',
+  success: '#4d8a5c',
+  danger: '#c0453a',
+  warning: '#c07f2e',
 } as const;
 
 export const dark = {
@@ -38,6 +41,9 @@ export const dark = {
   accentTint: '#3d281f',
   accentBg: '#2e1f17',
   onAccent: '#1a0f08',
+  success: '#7fb78e',
+  danger: '#d97768',
+  warning: '#d9a05b',
 } as const;
 
 export const sageLightOverride = {

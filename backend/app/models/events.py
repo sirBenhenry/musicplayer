@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -92,5 +92,6 @@ class UserNotification(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     action_taken: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # confirmed|wrong_song|bad_quality
+    data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # structured payload for genre_prompt/artist_prompt
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     dismissed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -9,7 +9,8 @@ import { Icon } from '../components/shared/Icon';
 import { useTheme } from '../hooks/useTheme';
 import { useStore } from '../lib/store';
 import { font, radius } from '../lib/tokens';
-import { getNotificationCount, importSongs, importSetup, getImportGuideUrl, exportLibrary, applyLibraryChanges, getSystemStatus } from '../lib/api';
+import { getNotificationCount, importSongs, importSetup, getImportGuideUrl, exportLibrary, applyLibraryChanges, getSystemStatus, sendDeviceLogs } from '../lib/api';
+import { readLogs, clearLogs } from '../lib/logger';
 
 export default function SettingsScreen() {
   const theme = useTheme();
@@ -50,6 +51,7 @@ export default function SettingsScreen() {
   const [sysStatus, setSysStatus] = useState<any>(null);
   const [sysLoading, setSysLoading] = useState(false);
   const sysIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [sendingLogs, setSendingLogs] = useState(false);
 
   const checkForUpdate = async () => {
     setUpdateState('checking');
@@ -389,6 +391,39 @@ export default function SettingsScreen() {
             <Text style={{ color: theme.fgMuted, fontSize: 14 }}>Could not load system status</Text>
           </View>
         )}
+      </Section>
+
+      <Section label="DEBUG" theme={theme}>
+        <TouchableOpacity
+          onPress={async () => {
+            setSendingLogs(true);
+            try {
+              const logs = await readLogs();
+              await sendDeviceLogs(logs);
+              Alert.alert('Sent', 'Logs sent to server. Check container stdout or /tmp/device_debug.log.');
+            } catch (e: any) {
+              Alert.alert('Failed', e.message ?? String(e));
+            } finally {
+              setSendingLogs(false);
+            }
+          }}
+          disabled={sendingLogs}
+          style={[styles.logoutRow, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}
+        >
+          <Text style={{ color: theme.fgStrong, fontSize: 15 }}>Send logs to server</Text>
+          {sendingLogs
+            ? <ActivityIndicator size="small" color={theme.accent} />
+            : <Icon name="download" color={theme.fgSoft} size={16} />}
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={async () => {
+            await clearLogs();
+            Alert.alert('Cleared', 'Log buffer cleared.');
+          }}
+          style={styles.logoutRow}
+        >
+          <Text style={{ color: theme.fgMuted, fontSize: 15 }}>Clear logs</Text>
+        </TouchableOpacity>
       </Section>
 
       <Section label="ACCOUNT" theme={theme}>

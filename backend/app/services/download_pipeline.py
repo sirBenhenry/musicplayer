@@ -155,47 +155,145 @@ async def _write_mb_tags(file_path: str, mb_recording: dict) -> bool:
         return False
 
 
+async def _caa_fetch(client, release_id: str) -> tuple[bytes | None, str]:
+    """Try Cover Art Archive for a single release. Returns (bytes, mime) or (None, '')."""
+    try:
+        r = await client.get(f"https://coverartarchive.org/release/{release_id}/front")
+        if r.status_code == 200:
+            mime = "image/png" if "png" in r.headers.get("content-type", "") else "image/jpeg"
+            return r.content, mime
+    except Exception:
+        pass
+    return None, ""
+
+
 async def _fetch_and_embed_cover(
     file_path: str,
     artist: str,
     title: str,
     album: str | None,
     mb_release_id: str | None,
+    mb_recording_id: str | None = None,
 ) -> bool:
-    """Fetch cover art from CAA or Last.fm and embed it. Returns True if embedded."""
+    """Fetch cover art and embed it into the audio file. Returns True if embedded.
+
+    Source chain (stops at first hit):
+    1. CAA — direct mb_release_id
+    2. CAA — all releases from mb_recording_id (MB recording lookup)
+    3. CAA — MB text search by artist+title → releases
+    4. Deezer search API (free, no key)
+    5. iTunes Search API (free, no key)
+    6. Last.fm track.getInfo (only if LASTFM_API_KEY set)
+    """
     import httpx
+    import urllib.parse
     image_bytes: bytes | None = None
     image_mime = "image/jpeg"
 
-    # 1. MusicBrainz Cover Art Archive (free, high quality)
-    if mb_release_id:
-        try:
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+    _MB_HEADERS = {"User-Agent": "MusicApp/1.0 (ben@gonnet.ch)"}
+    _MB_BASE = "https://musicbrainz.org/ws/2"
+
+    async with httpx.AsyncClient(timeout=12, follow_redirects=True, headers=_MB_HEADERS) as client:
+
+        # 1. CAA direct release ID
+        if mb_release_id and not image_bytes:
+            image_bytes, image_mime = await _caa_fetch(client, mb_release_id)
+
+        # 2. CAA via recording → ALL releases (not just first)
+        if mb_recording_id and not image_bytes:
+            try:
                 r = await client.get(
-                    f"https://coverartarchive.org/release/{mb_release_id}/front"
+                    f"{_MB_BASE}/recording/{mb_recording_id}",
+                    params={"inc": "releases", "fmt": "json"},
                 )
                 if r.status_code == 200:
-                    image_bytes = r.content
-                    ct = r.headers.get("content-type", "")
-                    if "png" in ct:
-                        image_mime = "image/png"
-        except Exception as e:
-            log.debug("CAA cover fetch failed for release %s: %s", mb_release_id, e)
+                    releases = r.json().get("releases", [])
+                    for rel in releases[:6]:
+                        rid = rel.get("id")
+                        if rid and rid != mb_release_id:
+                            image_bytes, image_mime = await _caa_fetch(client, rid)
+                            if image_bytes:
+                                break
+            except Exception as e:
+                log.debug("cover: MB recording releases failed: %s", e)
 
-    # 2. Last.fm track.getInfo image
-    if not image_bytes:
-        try:
-            from .lastfm import _call
-            data = await _call("track.getInfo", artist=artist, track=title, autocorrect=1)
-            images = data.get("track", {}).get("album", {}).get("image", [])
-            url = next((i["#text"] for i in reversed(images) if i.get("#text")), None)
-            if url:
-                async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-                    r = await client.get(url)
-                    if r.status_code == 200:
-                        image_bytes = r.content
-        except Exception as e:
-            log.debug("Last.fm cover fetch failed for %s - %s: %s", artist, title, e)
+        # 3. CAA via MB text search (artist+title → recording → releases)
+        if not image_bytes and artist and title:
+            try:
+                q = urllib.parse.quote(f'recording:"{title}" AND artist:"{artist}"')
+                r = await client.get(
+                    f"{_MB_BASE}/recording?query={q}&limit=3&fmt=json",
+                )
+                if r.status_code == 200:
+                    recordings = r.json().get("recordings", [])
+                    for rec in recordings[:3]:
+                        for rel in (rec.get("releases") or [])[:4]:
+                            rid = rel.get("id")
+                            if rid and rid not in (mb_release_id,):
+                                image_bytes, image_mime = await _caa_fetch(client, rid)
+                                if image_bytes:
+                                    break
+                        if image_bytes:
+                            break
+            except Exception as e:
+                log.debug("cover: MB text search failed for '%s - %s': %s", artist, title, e)
+
+        # 4. Deezer — free, no key, good coverage
+        if not image_bytes and artist and title:
+            try:
+                q = urllib.parse.quote(f"{artist} {title}")
+                r = await client.get(f"https://api.deezer.com/search?q={q}&limit=3")
+                if r.status_code == 200:
+                    data = r.json().get("data", [])
+                    cover_url = next(
+                        (item["album"]["cover_xl"] for item in data
+                         if item.get("album", {}).get("cover_xl")),
+                        None,
+                    )
+                    if cover_url:
+                        r2 = await client.get(cover_url)
+                        if r2.status_code == 200 and len(r2.content) > 1000:
+                            image_bytes = r2.content
+                            image_mime = "image/jpeg"
+            except Exception as e:
+                log.debug("cover: Deezer failed for '%s - %s': %s", artist, title, e)
+
+        # 5. iTunes Search API
+        if not image_bytes and artist and title:
+            try:
+                q = urllib.parse.quote(f"{artist} {title}")
+                r = await client.get(
+                    f"https://itunes.apple.com/search?term={q}&media=music&entity=musicTrack&limit=5"
+                )
+                if r.status_code == 200:
+                    results = r.json().get("results", [])
+                    url = next(
+                        (res["artworkUrl100"].replace("100x100bb", "600x600bb")
+                         for res in results if res.get("artworkUrl100")),
+                        None,
+                    )
+                    if url:
+                        r2 = await client.get(url)
+                        if r2.status_code == 200 and len(r2.content) > 1000:
+                            image_bytes = r2.content
+            except Exception as e:
+                log.debug("cover: iTunes failed for '%s - %s': %s", artist, title, e)
+
+        # 6. Last.fm — only if key configured
+        if not image_bytes:
+            try:
+                from .lastfm import _call as _lfm_call
+                settings = get_settings()
+                if getattr(settings, "LASTFM_API_KEY", None):
+                    data = await _lfm_call("track.getInfo", artist=artist, track=title, autocorrect=1)
+                    images = data.get("track", {}).get("album", {}).get("image", [])
+                    url = next((i["#text"] for i in reversed(images) if i.get("#text")), None)
+                    if url:
+                        r = await client.get(url)
+                        if r.status_code == 200 and len(r.content) > 1000:
+                            image_bytes = r.content
+            except Exception as e:
+                log.debug("cover: Last.fm failed for '%s - %s': %s", artist, title, e)
 
     if not image_bytes:
         return False
@@ -229,10 +327,14 @@ async def _fetch_and_embed_cover(
             audio["covr"] = [MP4Cover(image_bytes, imageformat=fmt)]
             audio.save()
         elif ext in (".ogg", ".opus"):
-            from mutagen.oggvorbis import OggVorbis
             from mutagen.flac import Picture
             import base64
-            audio = OggVorbis(file_path)
+            if ext == ".opus":
+                from mutagen.oggopus import OggOpus
+                audio = OggOpus(file_path)
+            else:
+                from mutagen.oggvorbis import OggVorbis
+                audio = OggVorbis(file_path)
             pic = Picture()
             pic.type = 3
             pic.mime = image_mime
@@ -305,6 +407,49 @@ async def request_download(
                     _song.needs_profile_assignment = False
                     log.info("request_download: dedup assigned profile %s → '%s - %s'", profile_id, artist, title)
             return dup
+
+    # Check songs table — catches library songs with no download job (original Navidrome
+    # library, or songs whose jobs were cleaned up).
+    from sqlalchemy import or_ as _or
+    from ..models.library import Song as _Song, Artist as _Artist
+    _lib_q = await db.execute(
+        select(_Song)
+        .join(_Artist, _Song.artist_id == _Artist.id, isouter=True)
+        .where(
+            _func.lower(_Song.title) == title.strip().lower(),
+            _or(
+                _func.lower(_func.coalesce(_Song.display_artist, "")) == artist.strip().lower(),
+                _func.lower(_func.coalesce(_Artist.name, "")) == artist.strip().lower(),
+            ),
+        )
+        .limit(1)
+    )
+    _existing_song = _lib_q.scalar_one_or_none()
+    if _existing_song:
+        log.info("request_download: already in library — %s - %s, skipping", artist, title)
+        if profile_id and not _existing_song.profile_id:
+            _existing_song.profile_id = profile_id
+            _existing_song.needs_profile_assignment = False
+        # Return a synthetic completed job so callers get a valid object back
+        _skip_job = DownloadJob(
+            item_type=item_type,
+            artist=artist,
+            title=title,
+            status="completed",
+            sources_tried=[],
+            retry_count=0,
+            playlist_id=playlist_id,
+            user_playlist_id=user_playlist_id,
+            profile_id=profile_id,
+            mb_recording_id=mb_recording_id,
+            candidates=[],
+            pipeline_log=[{"step": "skipped", "ts": datetime.now(timezone.utc).isoformat(),
+                            "status": "ok", "message": "Song already exists in library", "data": {}}],
+        )
+        db.add(_skip_job)
+        await db.flush()
+        await db.refresh(_skip_job)
+        return _skip_job
 
     job = DownloadJob(
         item_type=item_type,
@@ -879,12 +1024,55 @@ async def _post_download_hook(job_id: uuid.UUID) -> None:
             if not job or not job.file_path:
                 return
 
-            # Songs.file_path is Navidrome-relative; DownloadJob.file_path is absolute
+            # Songs.file_path is Navidrome-relative; DownloadJob.file_path is absolute.
+            # Navidrome uses tag-based virtual paths (Artist/Album/file) which differ from
+            # the flat filename we saved — so we need multi-fallback lookup.
             rel_path = job.file_path
             if rel_path.startswith(music_dir + "/"):
                 rel_path = rel_path[len(music_dir) + 1:]
             song_q = await db.execute(select(Song).where(Song.file_path == rel_path))
             song = song_q.scalar_one_or_none()
+
+            # Fallback 1: match by MB recording ID (most reliable when available)
+            if song is None and job.mb_recording_id:
+                song_q = await db.execute(select(Song).where(Song.mb_recording_id == job.mb_recording_id))
+                song = song_q.scalar_one_or_none()
+
+            # Fallback 2: title+artist exact match on songs added in last 10 min
+            if song is None and job.title and job.artist:
+                from datetime import timedelta
+                from sqlalchemy import func as _func
+                cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+                song_q = await db.execute(
+                    select(Song).where(
+                        _func.lower(Song.title) == job.title.lower(),
+                        Song.display_artist.ilike(job.artist),
+                        Song.added_at >= cutoff,
+                    ).order_by(Song.added_at.desc()).limit(1)
+                )
+                song = song_q.scalar_one_or_none()
+                if song:
+                    log.info("post-download hook: found song via title+artist fallback for '%s - %s'", job.artist, job.title)
+
+            # Mark cover art status; if missing, try immediately rather than waiting for scheduled job
+            if song:
+                has_cover = bool(job.selected_candidate and job.selected_candidate.get("has_cover_art"))
+                if not has_cover and job.file_path and os.path.exists(job.file_path):
+                    try:
+                        artist_name = song.display_artist or job.artist or ""
+                        album_name = song.album.title if song.album else None
+                        ok = await _fetch_and_embed_cover(
+                            job.file_path, artist_name, song.title, album_name,
+                            None, job.mb_recording_id or None,
+                        )
+                        if ok:
+                            has_cover = True
+                            log.info("post-download hook: embedded cover for '%s - %s'", artist_name, song.title)
+                    except Exception as e:
+                        log.debug("post-download hook: cover fetch failed for '%s': %s", song.title, e)
+                song.has_cover = has_cover
+                song.cover_last_tried_at = datetime.now(timezone.utc)
+                song.cover_fetch_attempts = 0 if has_cover else 1
 
             # Write MB-sourced romanized title if available
             if song and job.mb_recording_id:
@@ -897,10 +1085,37 @@ async def _post_download_hook(job_id: uuid.UUID) -> None:
                 except Exception as e:
                     log.warning("post-download hook: MB romanized lookup failed: %s", e)
 
+            # Stage songs downloaded for daily playlists — hidden in library until playlist processed.
+            # Also write the song's UUID back into the DailyPlaylist JSONB so EOD can identify it.
+            if song and job.playlist_id and not song.profile_id:
+                song.is_staged = True
+                try:
+                    from ..models.discovery import DailyPlaylist as _DP
+                    from sqlalchemy.orm import flag_modified as _fm_dp
+                    pl_obj = await db.get(_DP, job.playlist_id)
+                    if pl_obj and pl_obj.songs:
+                        songs_list = list(pl_obj.songs)
+                        job_artist = (job.artist or "").lower()
+                        job_title = (job.title or "").lower()
+                        for entry in songs_list:
+                            if entry.get("id") or entry.get("_genre") or entry.get("_artist_of_day"):
+                                continue
+                            ea = (entry.get("artist") or "").lower()
+                            et = (entry.get("title") or "").lower()
+                            if ea == job_artist and et == job_title:
+                                entry["id"] = str(song.id)
+                                entry["navidrome_id"] = song.navidrome_id or ""
+                                pl_obj.songs = songs_list
+                                _fm_dp(pl_obj, "songs")
+                                break
+                except Exception as _e:
+                    log.warning("post-download hook: DailyPlaylist JSONB update failed: %s", _e)
+
             # Assign to profile
             if song and job.profile_id:
                 song.profile_id = job.profile_id
                 song.needs_profile_assignment = False
+                song.is_staged = False
 
             # Auto-add to UserPlaylist when job was created with a user_playlist_id
             if song and job.user_playlist_id:

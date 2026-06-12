@@ -260,6 +260,7 @@ export default function SearchScreen() {
               const key = `${item.artist}/${item.title}`;
               return (
                 <View style={[styles.row, { borderBottomColor: theme.border }]}>
+                  <CoverArt uri={null} size={44} title={item.title} />
                   <View style={styles.info}>
                     <Text style={[styles.rowTitle, { color: theme.fg }]}>{item.title}</Text>
                     <Text style={[styles.rowSub, { color: theme.fgMuted }]}>

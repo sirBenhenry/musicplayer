@@ -38,6 +38,23 @@ def start_scheduler(settings) -> None:
     scheduler.add_job(analyse_pending_songs, "interval", minutes=5, id="essentia_analysis",
                       kwargs={"limit": 50})
 
+    # Cover art: daily scan at 04:00, fast retry every 4h for songs with 1-5 failed attempts
+    from ..jobs.cover_art_job import scan_missing_covers, retry_missing_covers
+    scheduler.add_job(scan_missing_covers, _cron("0 4 * * *"), id="cover_art_daily")
+    scheduler.add_job(retry_missing_covers, "interval", hours=4, id="cover_art_retry")
+
+    # Playlist health: retry failed playlist song downloads every 30 min; clean up at 06:00
+    from ..jobs.playlist_health import (
+        retry_playlist_songs, cleanup_unresolvable_playlist_songs, morning_playlist_readiness
+    )
+    scheduler.add_job(retry_playlist_songs, "interval", minutes=30, id="playlist_song_retry")
+    scheduler.add_job(morning_playlist_readiness, _cron("30 5 * * *"), id="playlist_morning_readiness")
+    scheduler.add_job(cleanup_unresolvable_playlist_songs, _cron("0 6 * * *"), id="playlist_morning_cleanup")
+
+    # Watchdog: re-apply no-upload qBit settings every hour in case they drift
+    from ..jobs.qbit_watchdog import enforce_no_upload
+    scheduler.add_job(enforce_no_upload, "interval", hours=1, id="qbit_watchdog")
+
     scheduler.start()
 
 

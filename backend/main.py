@@ -17,6 +17,17 @@ from app.models.profile import Profile
 settings = get_settings()
 log = logging.getLogger(__name__)
 
+# MCP server — optional, requires mcp package
+_mcp_lifespan = None
+try:
+    from app.mcp_server import create_mcp_app, mcp_lifespan as _mcp_lifespan_fn
+    _mcp_lifespan = _mcp_lifespan_fn
+    _MCP_APP = create_mcp_app()
+    log.info("MCP server configured at /mcp")
+except ImportError:
+    _MCP_APP = None
+    log.warning("mcp package not installed — /mcp endpoint disabled")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,7 +66,12 @@ async def lifespan(app: FastAPI):
         log.warning("Could not reset interrupted downloads on startup: %s", e)
 
     start_scheduler(settings)
-    yield
+    if _mcp_lifespan:
+        async with _mcp_lifespan():
+            log.info("MCP session manager started")
+            yield
+    else:
+        yield
     stop_scheduler()
 
 
@@ -83,6 +99,9 @@ app.include_router(admin.router, prefix="/api/v1")
 app.include_router(downloads.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(playlists.router, prefix="/api/v1")
+
+if _MCP_APP:
+    app.mount("/mcp", _MCP_APP)
 
 
 @app.get("/health")

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Image, View, StyleSheet, Text } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
 import { radius } from '../../lib/tokens';
@@ -13,9 +13,12 @@ interface Props {
 
 export function CoverArt({ uri, size, title, borderRadius = radius.cover, style }: Props) {
   const theme = useTheme();
+  const [imgError, setImgError] = useState(false);
   const initials = title
     ? title.split(' ').slice(0, 2).map((w) => w[0]?.toUpperCase()).join('')
     : '?';
+
+  const showImage = uri && !imgError;
 
   return (
     <View
@@ -31,11 +34,12 @@ export function CoverArt({ uri, size, title, borderRadius = radius.cover, style 
         style,
       ]}
     >
-      {uri ? (
+      {showImage ? (
         <Image
           source={{ uri }}
           style={{ width: size, height: size, borderRadius }}
           resizeMode="cover"
+          onError={() => setImgError(true)}
         />
       ) : (
         <Text style={[styles.initials, { color: theme.fgSoft, fontSize: size * 0.3 }]}>

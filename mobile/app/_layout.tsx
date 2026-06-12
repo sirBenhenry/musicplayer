@@ -1,5 +1,6 @@
 import React, { Component, useEffect } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
+import { appendLog, flushNow } from '../lib/logger';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -21,6 +22,10 @@ import { useTheme } from '../hooks/useTheme';
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
   state = { error: null };
   static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    appendLog(`[BOUNDARY] ${error.message}\n${error.stack ?? ''}\n${info.componentStack ?? ''}`);
+    flushNow();
+  }
   render() {
     if (this.state.error) {
       const msg = (this.state.error as Error).message;
@@ -81,7 +86,7 @@ export default function RootLayout() {
       setProfiles(ps);
       const cur = useStore.getState().activeProfileId;
       if (ps.length > 0 && (!cur || !ps.find((p) => p.id === cur))) {
-        setActiveProfile(ps[0].id);
+        setActiveProfile(ps[0].id, ps[0].is_catchall);
       }
     }).catch(() => {});
   }, [token]);

@@ -240,10 +240,13 @@ async def poll_completed_downloads() -> None:
                     if assigned:
                         newly_completed.append({
                             "id": job.id,
-                            "playlist_id": job.user_playlist_id,
+                            "daily_playlist_id": job.playlist_id,  # daily playlist FK (staging)
+                            "playlist_id": job.user_playlist_id,   # user playlist FK
                             "profile_id": job.profile_id,
                             "file_path": assigned,
                             "artist": job.artist,
+                            "title": job.title,
+                            "mb_recording_id": job.mb_recording_id,
                         })
 
                 await db.execute(
@@ -288,6 +291,8 @@ async def poll_completed_downloads() -> None:
         profile_jobs = [j for j in newly_completed if j.get("profile_id")]
         if profile_jobs:
             from ..models.library import Song as _Song
+            from sqlalchemy import func as _func_p
+            from datetime import timedelta as _td_p
             async with AsyncSessionLocal() as prof_db:
                 try:
                     for completed in profile_jobs:
@@ -296,6 +301,19 @@ async def poll_completed_downloads() -> None:
                             rel = rel[len(music_dir) + 1:]
                         song_q = await prof_db.execute(select(_Song).where(_Song.file_path == rel))
                         song = song_q.scalar_one_or_none()
+                        if song is None and completed.get("mb_recording_id"):
+                            song_q = await prof_db.execute(select(_Song).where(_Song.mb_recording_id == completed["mb_recording_id"]))
+                            song = song_q.scalar_one_or_none()
+                        if song is None and completed.get("title") and completed.get("artist"):
+                            cutoff = datetime.now(timezone.utc) - _td_p(minutes=15)
+                            song_q = await prof_db.execute(
+                                select(_Song).where(
+                                    _func_p.lower(_Song.title) == completed["title"].lower(),
+                                    _Song.display_artist.ilike(completed["artist"]),
+                                    _Song.added_at >= cutoff,
+                                ).order_by(_Song.added_at.desc()).limit(1)
+                            )
+                            song = song_q.scalar_one_or_none()
                         if song:
                             song.profile_id = completed["profile_id"]
                             song.needs_profile_assignment = False
@@ -303,12 +321,68 @@ async def poll_completed_downloads() -> None:
                 except Exception as e:
                     log.warning("qb_poller: profile assignment failed: %s", e)
 
+        # Stage songs downloaded for daily playlists (hidden until playlist processed).
+        # Also write song UUID back into DailyPlaylist JSONB so EOD can identify it.
+        staged_jobs = [j for j in newly_completed if j.get("daily_playlist_id") and j.get("file_path")]
+        if staged_jobs:
+            from ..models.library import Song as _Song
+            from ..models.discovery import DailyPlaylist as _DP
+            from sqlalchemy.orm import flag_modified as _fm_dp
+            from sqlalchemy import func as _func_s
+            from datetime import timedelta as _td_s
+            async with AsyncSessionLocal() as stage_db:
+                try:
+                    for completed in staged_jobs:
+                        rel = completed["file_path"]
+                        if rel.startswith(music_dir + "/"):
+                            rel = rel[len(music_dir) + 1:]
+                        song_q = await stage_db.execute(select(_Song).where(_Song.file_path == rel))
+                        song = song_q.scalar_one_or_none()
+                        if song is None and completed.get("mb_recording_id"):
+                            song_q = await stage_db.execute(select(_Song).where(_Song.mb_recording_id == completed["mb_recording_id"]))
+                            song = song_q.scalar_one_or_none()
+                        if song is None and completed.get("title") and completed.get("artist"):
+                            cutoff = datetime.now(timezone.utc) - _td_s(minutes=15)
+                            song_q = await stage_db.execute(
+                                select(_Song).where(
+                                    _func_s.lower(_Song.title) == completed["title"].lower(),
+                                    _Song.display_artist.ilike(completed["artist"]),
+                                    _Song.added_at >= cutoff,
+                                ).order_by(_Song.added_at.desc()).limit(1)
+                            )
+                            song = song_q.scalar_one_or_none()
+                        if song and not song.profile_id:
+                            song.is_staged = True
+                            # Update DailyPlaylist JSONB with song UUID so EOD can track it
+                            pl_id = completed["daily_playlist_id"]
+                            pl_obj = await stage_db.get(_DP, pl_id)
+                            if pl_obj and pl_obj.songs:
+                                songs_list = list(pl_obj.songs)
+                                job_artist = (completed.get("artist") or "").lower()
+                                job_title = (completed.get("title") or "").lower()
+                                for entry in songs_list:
+                                    if entry.get("id") or entry.get("_genre") or entry.get("_artist_of_day"):
+                                        continue
+                                    ea = (entry.get("artist") or "").lower()
+                                    et = (entry.get("title") or "").lower()
+                                    if ea == job_artist and et == job_title:
+                                        entry["id"] = str(song.id)
+                                        entry["navidrome_id"] = song.navidrome_id or ""
+                                        pl_obj.songs = songs_list
+                                        _fm_dp(pl_obj, "songs")
+                                        break
+                    await stage_db.commit()
+                except Exception as e:
+                    log.warning("qb_poller: staging failed: %s", e)
+
         # Auto-add newly completed prowlarr jobs to their UserPlaylist
         playlist_jobs = [j for j in newly_completed if j.get("playlist_id")]
         if playlist_jobs:
             from ..models.library import Song as _Song
             from ..models.playlists import UserPlaylist as _UPL
             from sqlalchemy.orm import flag_modified as _fm
+            from sqlalchemy import func as _func_u
+            from datetime import timedelta as _td_u
             async with AsyncSessionLocal() as upl_db:
                 try:
                     for completed in playlist_jobs:
@@ -317,6 +391,21 @@ async def poll_completed_downloads() -> None:
                             rel = rel[len(music_dir) + 1:]
                         song_q = await upl_db.execute(select(_Song).where(_Song.file_path == rel))
                         song = song_q.scalar_one_or_none()
+                        if song is None and completed.get("mb_recording_id"):
+                            song_q = await upl_db.execute(select(_Song).where(_Song.mb_recording_id == completed["mb_recording_id"]))
+                            song = song_q.scalar_one_or_none()
+                        if song is None and completed.get("title") and completed.get("artist"):
+                            cutoff = datetime.now(timezone.utc) - _td_u(minutes=15)
+                            song_q = await upl_db.execute(
+                                select(_Song).where(
+                                    _func_u.lower(_Song.title) == completed["title"].lower(),
+                                    _Song.display_artist.ilike(completed["artist"]),
+                                    _Song.added_at >= cutoff,
+                                ).order_by(_Song.added_at.desc()).limit(1)
+                            )
+                            song = song_q.scalar_one_or_none()
+                            if song:
+                                log.info("qb_poller: found song via title+artist fallback for '%s - %s'", completed["artist"], completed["title"])
                         if not song:
                             continue
                         upl = await upl_db.get(_UPL, completed["playlist_id"])

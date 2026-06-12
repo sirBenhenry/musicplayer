@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -20,8 +20,15 @@ import { useTheme } from '../../hooks/useTheme';
 import { useStore } from '../../lib/store';
 import { CoverArt } from '../shared/CoverArt';
 import { Icon } from '../shared/Icon';
+import { Waveform } from './Waveform';
+import { SongActionSheet } from '../shared/SongActionSheet';
+import { PlaylistPickerModal } from '../shared/PlaylistPickerModal';
+import { ProfilePickerModal } from '../shared/ProfilePickerModal';
 import { font, radius } from '../../lib/tokens';
-import { togglePlay, seek, skipToNext, skipToPrev } from '../../lib/audio';
+import { flagSong } from '../../lib/api';
+import {
+  togglePlay, seek, skipToNext, skipToPrev, cycleRepeatMode, shuffleUpcoming,
+} from '../../lib/audio';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const NAV_H = 72;
@@ -42,15 +49,30 @@ interface Props {
 export function FullPlayer({ onClose }: Props) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { currentSong, isPlaying, progress, activeProfileId, profiles, queue, queueIndex, setQueueOpen } = useStore();
-  const [stayInProfile, setStayInProfile] = useState(true);
-  const [liked, setLiked] = useState(false);
+  const {
+    currentSong, isPlaying, progress, activeProfileId, profiles,
+    queue, queueIndex, explicitQueue, autoQueue, setQueueOpen,
+    playlistId, radioScope, setRadioScope, repeatMode,
+  } = useStore();
+  const [kept, setKept] = useState(false);
+  const [shuffledOnce, setShuffledOnce] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekProgress, setSeekProgress] = useState(0);
+  const [actionOpen, setActionOpen] = useState(false);
+  const [playlistPickerOpen, setPlaylistPickerOpen] = useState(false);
+  const [profilePickerOpen, setProfilePickerOpen] = useState(false);
   const seekTrackWidth = SW - 56;
 
   const profile = profiles.find((p) => p.id === activeProfileId) ?? profiles[0];
-  const nextSong = queueIndex + 1 < queue.length ? queue[queueIndex + 1] : null;
+  const isDaily = !!playlistId;
+  // Priority: explicit queue → auto queue → next in playlist context
+  const nextSong = explicitQueue[0] ?? autoQueue[0] ?? (queueIndex + 1 < queue.length ? queue[queueIndex + 1] : null);
+
+  // Reset per-song flags when the track changes
+  useEffect(() => {
+    setKept(false);
+    setShuffledOnce(false);
+  }, [currentSong?.id]);
 
   const top = useSharedValue(SH - MINI_BOTTOM - MINI_H - MINI_MARGIN);
   const borderR = useSharedValue<number>(radius.card);
@@ -108,6 +130,17 @@ export function FullPlayer({ onClose }: Props) {
       runOnJS(setIsSeeking)(false);
     });
 
+  const handleKeep = () => {
+    if (!isDaily || !playlistId || kept) return;
+    setKept(true);
+    flagSong(playlistId, currentSong.id, 'keep').catch(() => setKept(false));
+  };
+
+  const handleShuffle = async () => {
+    setShuffledOnce(true);
+    await shuffleUpcoming();
+  };
+
   return (
     <GestureDetector gesture={swipeGesture}>
       <Animated.View
@@ -126,7 +159,7 @@ export function FullPlayer({ onClose }: Props) {
           </Pressable>
           <View style={{ alignItems: 'center' }}>
             <Text style={[styles.label, { color: theme.fgMuted, fontFamily: font.mono }]}>
-              PLAYING FROM
+              {isDaily ? 'DAILY PLAYLIST' : 'PLAYING FROM'}
             </Text>
             {profile && (
               <Text style={[styles.profileName, { color: theme.fgStrong }]}>
@@ -134,7 +167,7 @@ export function FullPlayer({ onClose }: Props) {
               </Text>
             )}
           </View>
-          <Pressable style={styles.iconBtn} hitSlop={12}>
+          <Pressable onPress={() => setActionOpen(true)} style={styles.iconBtn} hitSlop={12}>
             <Icon name="dots" color={theme.fgStrong} size={22} />
           </Pressable>
         </View>
@@ -157,7 +190,7 @@ export function FullPlayer({ onClose }: Props) {
             />
           </View>
 
-          {/* Title + heart */}
+          {/* Title + keep-heart (daily only) */}
           <View style={styles.meta}>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={[styles.title, { color: theme.fgStrong }]} numberOfLines={2}>
@@ -167,35 +200,27 @@ export function FullPlayer({ onClose }: Props) {
                 {currentSong.artist}
               </Text>
             </View>
-            <Pressable
-              onPress={() => setLiked(!liked)}
-              style={styles.iconBtn}
-              hitSlop={12}
-            >
-              <Icon
-                name={liked ? 'heartFill' : 'heart'}
-                color={liked ? theme.accent : theme.fgMuted}
-                size={24}
-              />
-            </Pressable>
+            {isDaily && (
+              <Pressable onPress={handleKeep} style={styles.iconBtn} hitSlop={12}>
+                <Icon
+                  name={kept ? 'heartFill' : 'heart'}
+                  color={kept ? theme.accent : theme.fgMuted}
+                  size={24}
+                />
+              </Pressable>
+            )}
           </View>
 
-          {/* Progress */}
+          {/* Waveform progress + seek */}
           <View style={styles.progressWrap}>
             <GestureDetector gesture={seekGesture}>
               <View style={styles.seekHitArea}>
-                <View style={[styles.progressTrack, { backgroundColor: theme.border }]}>
-                  <View
-                    style={[styles.progressFill, { width: `${displayProgress * 100}%` as any, backgroundColor: theme.accent }]}
-                  />
-                  <View
-                    style={[
-                      styles.progressThumb,
-                      { left: `${displayProgress * 100}%` as any, backgroundColor: theme.accent,
-                        transform: [{ scale: isSeeking ? 1.4 : 1 }] },
-                    ]}
-                  />
-                </View>
+                <Waveform
+                  songId={currentSong.id}
+                  progress={displayProgress}
+                  height={36}
+                  width={seekTrackWidth}
+                />
               </View>
             </GestureDetector>
             <View style={styles.timeRow}>
@@ -210,23 +235,39 @@ export function FullPlayer({ onClose }: Props) {
 
           {/* Controls */}
           <View style={styles.controls}>
-            <Pressable hitSlop={12}>
-              <Icon name="shuffle" color={theme.fgMuted} size={22} />
+            <Pressable hitSlop={12} onPress={handleShuffle}>
+              <Icon
+                name="shuffle"
+                color={shuffledOnce ? theme.accent : theme.fgMuted}
+                size={22}
+              />
             </Pressable>
             <Pressable hitSlop={12} onPress={skipToPrev}>
               <Icon name="prev" color={theme.fgStrong} size={30} />
             </Pressable>
             <Pressable
               onPress={togglePlay}
-              style={[styles.playBtn, { backgroundColor: theme.fgStrong }]}
+              style={({ pressed }) => [
+                styles.playBtn,
+                { backgroundColor: theme.fgStrong, transform: [{ scale: pressed ? 0.96 : 1 }] },
+              ]}
             >
               <Icon name={isPlaying ? 'pause' : 'play'} color={theme.bg} size={28} />
             </Pressable>
             <Pressable hitSlop={12} onPress={skipToNext}>
               <Icon name="skip" color={theme.fgStrong} size={30} />
             </Pressable>
-            <Pressable hitSlop={12}>
-              <Icon name="repeat" color={theme.fgMuted} size={22} />
+            <Pressable hitSlop={12} onPress={cycleRepeatMode} style={{ position: 'relative' }}>
+              <Icon
+                name="repeat"
+                color={repeatMode === 'off' ? theme.fgMuted : theme.accent}
+                size={22}
+              />
+              {repeatMode === 'track' && (
+                <View style={[styles.repeatOneDot, { backgroundColor: theme.accent }]}>
+                  <Text style={{ color: theme.onAccent, fontSize: 8, fontWeight: '700', lineHeight: 10 }}>1</Text>
+                </View>
+              )}
             </Pressable>
           </View>
 
@@ -236,28 +277,28 @@ export function FullPlayer({ onClose }: Props) {
             <Text style={[styles.radioLabel, { color: theme.fgMuted }]}>
               {'Auto-radio: '}
               <Text style={{ color: theme.fgStrong, fontWeight: '600' }}>
-                {stayInProfile && profile ? profile.name : 'Full library'}
+                {radioScope === 'profile' && profile ? profile.name : 'Full library'}
               </Text>
             </Text>
             <Pressable
-              onPress={() => setStayInProfile(!stayInProfile)}
+              onPress={() => setRadioScope(radioScope === 'profile' ? 'library' : 'profile')}
               style={[
                 styles.radioTag,
                 {
-                  backgroundColor: stayInProfile ? theme.accent : theme.surface,
-                  borderColor: stayInProfile ? theme.accent : theme.border,
+                  backgroundColor: radioScope === 'profile' ? theme.accent : theme.surface,
+                  borderColor: radioScope === 'profile' ? theme.accent : theme.border,
                 },
               ]}
             >
-              <Text style={{ color: stayInProfile ? theme.onAccent : theme.fgStrong, fontSize: 11.5, fontWeight: '600' }}>
-                {stayInProfile ? 'Stay' : 'Open'}
+              <Text style={{ color: radioScope === 'profile' ? theme.onAccent : theme.fgStrong, fontSize: 11.5, fontWeight: '600' }}>
+                {radioScope === 'profile' ? 'Stay' : 'Open'}
               </Text>
             </Pressable>
           </View>
 
           {/* Up next */}
-          {nextSong && (
-            <View style={styles.upNext}>
+          {nextSong ? (
+            <Pressable onPress={() => setQueueOpen(true)} style={({ pressed }) => [styles.upNext, { opacity: pressed ? 0.7 : 1 }]}>
               <CoverArt uri={nextSong.cover_url} size={34} title={nextSong.title} />
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={[styles.upNextLabel, { color: theme.fgMuted, fontFamily: font.mono }]}>
@@ -269,12 +310,43 @@ export function FullPlayer({ onClose }: Props) {
                   <Text style={{ color: theme.fgMuted }}>{nextSong.artist}</Text>
                 </Text>
               </View>
-              <Pressable onPress={() => setQueueOpen(true)} hitSlop={8}>
+              <Icon name="list" color={theme.fgSoft} size={18} strokeWidth={1.6} />
+            </Pressable>
+          ) : (
+            <View style={styles.upNext}>
+              <Pressable onPress={() => setQueueOpen(true)} hitSlop={8} style={{ marginLeft: 'auto' }}>
                 <Icon name="list" color={theme.fgSoft} size={18} strokeWidth={1.6} />
               </Pressable>
             </View>
           )}
         </View>
+
+        {/* Song actions for the current track */}
+        <SongActionSheet
+          visible={actionOpen}
+          song={currentSong ? { id: currentSong.id, title: currentSong.title } : null}
+          onClose={() => setActionOpen(false)}
+          onAddToPlaylist={() => setPlaylistPickerOpen(true)}
+          onAssignProfile={() => setProfilePickerOpen(true)}
+          onDeleted={() => {
+            setActionOpen(false);
+            skipToNext().catch(() => {});
+          }}
+        />
+        <PlaylistPickerModal
+          visible={playlistPickerOpen}
+          songId={currentSong?.id ?? ''}
+          songTitle={currentSong?.title ?? ''}
+          onClose={() => setPlaylistPickerOpen(false)}
+          onAdded={() => setPlaylistPickerOpen(false)}
+        />
+        <ProfilePickerModal
+          visible={profilePickerOpen}
+          songId={currentSong?.id ?? ''}
+          songTitle={currentSong?.title ?? ''}
+          onClose={() => setProfilePickerOpen(false)}
+          onAssigned={() => setProfilePickerOpen(false)}
+        />
       </Animated.View>
     </GestureDetector>
   );
@@ -331,34 +403,12 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
   progressWrap: {
-    marginTop: 22,
-  },
-  progressTrack: {
-    height: 3,
-    borderRadius: 100,
-    overflow: 'visible',
-    position: 'relative',
-  },
-  progressFill: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: 0,
-    borderRadius: 100,
-  },
-  progressThumb: {
-    position: 'absolute',
-    top: '50%',
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginTop: -6,
-    marginLeft: -6,
+    marginTop: 18,
   },
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 8,
+    marginTop: 6,
   },
   time: {
     fontSize: 11.5,
@@ -381,6 +431,16 @@ const styles = StyleSheet.create({
     shadowRadius: 24,
     elevation: 8,
     shadowColor: '#28190f',
+  },
+  repeatOneDot: {
+    position: 'absolute',
+    top: -4,
+    right: -6,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   radioRow: {
     marginTop: 22,
@@ -410,6 +470,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    minHeight: 54,
   },
   upNextLabel: {
     fontSize: 9.5,
@@ -421,9 +482,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   seekHitArea: {
-    height: 36,
+    height: 40,
     justifyContent: 'center',
-    marginHorizontal: -4,
-    paddingHorizontal: 4,
   },
 });

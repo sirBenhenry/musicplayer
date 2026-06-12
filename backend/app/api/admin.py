@@ -317,6 +317,20 @@ async def trigger_retry_downloads(_: str = Depends(require_auth)):
     return {"status": "retry queued"}
 
 
+@router.post("/generate")
+async def trigger_generate(_: str = Depends(require_auth)):
+    from ..jobs.nightly import run_nightly
+    asyncio.create_task(run_nightly())
+    return {"status": "generation queued"}
+
+
+@router.post("/fetch-covers", dependencies=[Depends(require_auth)])
+async def trigger_fetch_covers():
+    from ..jobs.cover_art_job import scan_missing_covers
+    asyncio.create_task(scan_missing_covers())
+    return {"status": "cover fetch queued"}
+
+
 # ── Bulk import endpoints ─────────────────────────────────────────────────────
 
 class ImportSongItem(BaseModel):
@@ -633,3 +647,17 @@ async def apply_library(body: ApplyLibraryRequest, db: AsyncSession = Depends(ge
 
     log.info("apply-library: %d assigned, %d deleted, %d errors", assigned, deleted, len(errors))
     return {"assigned": assigned, "deleted": deleted, "errors": errors}
+
+
+class DeviceLogsBody(BaseModel):
+    logs: str = ""
+
+
+@router.post("/device-logs", status_code=204)
+async def receive_device_logs(body: DeviceLogsBody, _: str = Depends(require_auth)):
+    log.warning("=== DEVICE LOGS ===\n%s\n=== END DEVICE LOGS ===", body.logs)
+    try:
+        with open("/tmp/device_debug.log", "w") as f:
+            f.write(body.logs)
+    except Exception as e:
+        log.error("Failed writing device log: %s", e)

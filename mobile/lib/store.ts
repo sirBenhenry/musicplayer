@@ -34,7 +34,7 @@ interface AppStore {
   // Profile
   activeProfileId: string | null;
   profiles: Profile[];
-  setActiveProfile: (id: string) => void;
+  setActiveProfile: (id: string, isCatchall?: boolean) => void;
   setProfiles: (profiles: Profile[]) => void;
 
   // Playback
@@ -65,6 +65,12 @@ interface AppStore {
   shortBans: Record<string, number>;
   addShortBan: (id: string) => void;
   getActiveBanIds: () => string[];
+
+  // Playback preferences
+  radioScope: 'profile' | 'library';
+  setRadioScope: (s: 'profile' | 'library') => void;
+  repeatMode: 'off' | 'queue' | 'track';
+  setRepeatMode: (m: 'off' | 'queue' | 'track') => void;
 
   // Theme
   isDark: boolean;
@@ -105,9 +111,10 @@ export const useStore = create<AppStore>((set, get) => ({
 
   activeProfileId: null,
   profiles: [],
-  setActiveProfile: (id) => {
+  setActiveProfile: (id, isCatchall = false) => {
     set({ activeProfileId: id });
     AsyncStorage.setItem('activeProfileId', id);
+    AsyncStorage.setItem('activeProfileIsCatchall', isCatchall ? '1' : '0');
   },
   setProfiles: (profiles) => set({ profiles }),
 
@@ -145,6 +152,14 @@ export const useStore = create<AppStore>((set, get) => ({
       .map(([id]) => id);
   },
 
+  radioScope: 'profile',
+  setRadioScope: (s) => {
+    set({ radioScope: s });
+    AsyncStorage.setItem('radioScope', s);
+  },
+  repeatMode: 'off',
+  setRepeatMode: (m) => set({ repeatMode: m }),
+
   isDark: false,
   isSage: false,
   toggleDark: () => {
@@ -167,11 +182,12 @@ export const useStore = create<AppStore>((set, get) => ({
   setNotificationCount: (n) => set({ notificationCount: n }),
 
   hydrate: async () => {
-    const [auth, profileId, isDark, isSage] = await Promise.all([
+    const [auth, profileId, isDark, isSage, radioScope] = await Promise.all([
       AsyncStorage.getItem('auth'),
       AsyncStorage.getItem('activeProfileId'),
       AsyncStorage.getItem('isDark'),
       AsyncStorage.getItem('isSage'),
+      AsyncStorage.getItem('radioScope'),
     ]);
     if (auth) {
       const { token, serverUrl } = JSON.parse(auth);
@@ -180,5 +196,6 @@ export const useStore = create<AppStore>((set, get) => ({
     if (profileId) set({ activeProfileId: profileId });
     if (isDark) set({ isDark: isDark === 'true' });
     if (isSage) set({ isSage: isSage === 'true' });
+    if (radioScope === 'library' || radioScope === 'profile') set({ radioScope });
   },
 }));
