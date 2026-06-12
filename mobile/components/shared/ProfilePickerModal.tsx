@@ -5,6 +5,7 @@ import { Icon } from './Icon';
 import { font, radius } from '../../lib/tokens';
 import { setSongProfile } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import * as haptics from '../../lib/haptics';
 
 interface Props {
   visible: boolean;
@@ -36,6 +37,7 @@ export function ProfilePickerModal({ visible, songId, songTitle, currentProfileI
     setSaving(profileId ?? 'none');
     try {
       await setSongProfile(songId, profileId);
+      haptics.success();
       onAssigned?.(profileName);
       onClose();
     } catch (e: any) {

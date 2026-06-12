@@ -1,5 +1,5 @@
 import React, { Component, useEffect } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
 import { appendLog, flushNow } from '../lib/logger';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -33,12 +33,12 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Er
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, backgroundColor: '#f4ede2' }}>
           <Text style={{ fontSize: 16, color: '#b8553a', fontWeight: '600', marginBottom: 8 }}>Something went wrong</Text>
           <Text style={{ fontSize: 12, color: '#6e655a', marginBottom: 20, textAlign: 'center' }}>{msg}</Text>
-          <TouchableOpacity
+          <Pressable
             onPress={() => this.setState({ error: null })}
             style={{ paddingVertical: 12, paddingHorizontal: 24, backgroundColor: '#b8553a', borderRadius: 8 }}
           >
             <Text style={{ color: '#fff8f2', fontWeight: '600' }}>Retry</Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
       );
     }

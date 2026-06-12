@@ -26,6 +26,7 @@ import { PlaylistPickerModal } from '../shared/PlaylistPickerModal';
 import { ProfilePickerModal } from '../shared/ProfilePickerModal';
 import { font, radius } from '../../lib/tokens';
 import { flagSong } from '../../lib/api';
+import * as haptics from '../../lib/haptics';
 import {
   togglePlay, seek, skipToNext, skipToPrev, cycleRepeatMode, shuffleUpcoming,
 } from '../../lib/audio';
@@ -123,6 +124,7 @@ export function FullPlayer({ onClose }: Props) {
     })
     .onEnd((e) => {
       const pct = Math.max(0, Math.min(1, e.x / seekTrackWidth));
+      runOnJS(haptics.selection)();
       runOnJS(seek)(pct);
       runOnJS(setIsSeeking)(false);
     })
@@ -133,10 +135,12 @@ export function FullPlayer({ onClose }: Props) {
   const handleKeep = () => {
     if (!isDaily || !playlistId || kept) return;
     setKept(true);
+    haptics.success();
     flagSong(playlistId, currentSong.id, 'keep').catch(() => setKept(false));
   };
 
   const handleShuffle = async () => {
+    haptics.selection();
     setShuffledOnce(true);
     await shuffleUpcoming();
   };
@@ -257,7 +261,7 @@ export function FullPlayer({ onClose }: Props) {
             <Pressable hitSlop={12} onPress={skipToNext}>
               <Icon name="skip" color={theme.fgStrong} size={30} />
             </Pressable>
-            <Pressable hitSlop={12} onPress={cycleRepeatMode} style={{ position: 'relative' }}>
+            <Pressable hitSlop={12} onPress={() => { haptics.selection(); cycleRepeatMode(); }} style={{ position: 'relative' }}>
               <Icon
                 name="repeat"
                 color={repeatMode === 'off' ? theme.fgMuted : theme.accent}
@@ -281,7 +285,7 @@ export function FullPlayer({ onClose }: Props) {
               </Text>
             </Text>
             <Pressable
-              onPress={() => setRadioScope(radioScope === 'profile' ? 'library' : 'profile')}
+              onPress={() => { haptics.selection(); setRadioScope(radioScope === 'profile' ? 'library' : 'profile'); }}
               style={[
                 styles.radioTag,
                 {

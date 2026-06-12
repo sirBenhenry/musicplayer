@@ -8,6 +8,7 @@ const { width: SW, height: SH } = Dimensions.get('window');
 const NAV_H = 72;
 import { useTheme } from '../../hooks/useTheme';
 import { useStore } from '../../lib/store';
+import * as haptics from '../../lib/haptics';
 import { Icon } from '../../components/shared/Icon';
 import {
   RadialSwitcher,
@@ -41,6 +42,7 @@ export default function TabLayout() {
   const anchorRef = useRef({ x: SW / 2, y: SH - NAV_H / 2 });
 
   const openRadial = useCallback(() => {
+    haptics.press();
     const { x: ax, y: ay } = anchorRef.current;
     positionsRef.current = computeNodePositions(profilesRef.current.length, ax, ay);
     setRadialAnchor({ x: ax, y: ay });
@@ -73,6 +75,7 @@ export default function TabLayout() {
     if (bestId !== hoveredIdRef.current) {
       hoveredIdRef.current = bestId;
       setHoveredId(bestId);
+      if (bestId) haptics.selection();
     }
   }, []);
 
@@ -80,12 +83,14 @@ export default function TabLayout() {
     const selected = hoveredIdRef.current;
     closeRadial();
     if (selected) {
+      haptics.success();
       const p = profiles.find(pr => pr.id === selected);
       setActiveProfile(selected, p?.is_catchall ?? false);
     }
   }, [closeRadial, setActiveProfile]);
 
   const navigateHome = useCallback(() => {
+    haptics.selection();
     navigationRef.current?.navigate('index');
   }, []);
 
@@ -128,7 +133,7 @@ export default function TabLayout() {
             <View style={[styles.nav, { backgroundColor: theme.bgElev, borderTopColor: theme.borderSoft }]}>
 
               {/* Search */}
-              <Pressable onPress={() => navigation.navigate('search')} style={styles.navBtn}>
+              <Pressable onPress={() => { haptics.selection(); navigation.navigate('search'); }} style={styles.navBtn}>
                 <Icon
                   name="search"
                   color={state.index === 0 ? theme.accent : theme.fgMuted}
@@ -167,7 +172,7 @@ export default function TabLayout() {
               </View>
 
               {/* Library */}
-              <Pressable onPress={() => navigation.navigate('library')} style={styles.navBtn}>
+              <Pressable onPress={() => { haptics.selection(); navigation.navigate('library'); }} style={styles.navBtn}>
                 <Icon
                   name="library"
                   color={state.index === 2 ? theme.accent : theme.fgMuted}

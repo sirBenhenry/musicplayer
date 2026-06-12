@@ -6,8 +6,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
+
   View,
+  Pressable,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -177,9 +178,9 @@ export default function DownloadsScreen() {
       }
     >
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
+        <Pressable onPress={() => router.back()} hitSlop={12}>
           <Icon name="arrowLeft" color={theme.fgStrong} size={22} />
-        </TouchableOpacity>
+        </Pressable>
         <Text style={[styles.heading, { color: theme.fgStrong }]}>Pipeline Activity</Text>
       </View>
 
@@ -242,7 +243,7 @@ function JobCard({
       !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft },
     ]}>
       {/* Main row */}
-      <TouchableOpacity onPress={onExpand} style={styles.jobMain} activeOpacity={0.7}>
+      <Pressable onPress={onExpand} style={styles.jobMain}>
         <View style={{ flex: 1 }}>
           <Text style={[styles.jobTitle, { color: theme.fgStrong }]} numberOfLines={1}>
             {job.artist} — {job.title}
@@ -262,7 +263,7 @@ function JobCard({
           </View>
         </View>
         <Text style={{ color: theme.fgSoft, fontSize: 16 }}>{isExpanded ? '▲' : '▼'}</Text>
-      </TouchableOpacity>
+      </Pressable>
 
       {/* Review actions */}
       {needsReview && !reviewing && (
@@ -271,24 +272,24 @@ function JobCard({
             {job.review_status === 'pending_review' ? 'Low confidence — verify this is correct:' : 'Poor quality — flag for upgrade or verify:'}
           </Text>
           <View style={styles.reviewBtns}>
-            <TouchableOpacity
+            <Pressable
               onPress={() => onReview('wrong_song')}
               style={[styles.reviewBtn, { backgroundColor: '#f4433620' }]}
             >
               <Text style={[styles.reviewBtnText, { color: '#f44336' }]}>Wrong Song</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </Pressable>
+            <Pressable
               onPress={() => onReview('bad_quality')}
               style={[styles.reviewBtn, { backgroundColor: '#ff980020' }]}
             >
               <Text style={[styles.reviewBtnText, { color: '#ff9800' }]}>Bad Quality</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </Pressable>
+            <Pressable
               onPress={() => onReview('confirm')}
               style={[styles.reviewBtn, { backgroundColor: '#4caf5020' }]}
             >
               <Text style={[styles.reviewBtnText, { color: '#4caf50' }]}>Sounds Good</Text>
-            </TouchableOpacity>
+            </Pressable>
           </View>
         </View>
       )}
@@ -301,7 +302,7 @@ function JobCard({
       {/* Standard actions */}
       <View style={styles.actions}>
         {canCancel && (
-          <TouchableOpacity
+          <Pressable
             onPress={onCancel}
             disabled={cancelling}
             style={[styles.actionBtn, { backgroundColor: theme.bgElev, borderColor: theme.border, borderWidth: 1 }]}
@@ -310,10 +311,10 @@ function JobCard({
               ? <ActivityIndicator size="small" color={theme.fgMuted} />
               : <Text style={[styles.actionText, { color: theme.fgMuted }]}>Cancel</Text>
             }
-          </TouchableOpacity>
+          </Pressable>
         )}
         {canRetry && (
-          <TouchableOpacity
+          <Pressable
             onPress={onRetry}
             disabled={retrying}
             style={[styles.actionBtn, { backgroundColor: theme.accentBg }]}
@@ -322,12 +323,12 @@ function JobCard({
               ? <ActivityIndicator size="small" color={theme.accent} />
               : <Text style={[styles.actionText, { color: theme.accent }]}>Retry fresh</Text>
             }
-          </TouchableOpacity>
+          </Pressable>
         )}
         {canDelete && (
-          <TouchableOpacity onPress={onDelete} style={[styles.actionBtn, { backgroundColor: theme.bgElev }]}>
+          <Pressable onPress={onDelete} style={[styles.actionBtn, { backgroundColor: theme.bgElev }]}>
             <Text style={[styles.actionText, { color: theme.fgMuted }]}>✕</Text>
-          </TouchableOpacity>
+          </Pressable>
         )}
       </View>
 

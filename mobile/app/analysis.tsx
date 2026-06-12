@@ -197,7 +197,7 @@ export default function AnalysisScreen() {
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   scroll: { paddingHorizontal: 16, gap: 12 },
-  heading: { fontFamily: font.sans, fontSize: 24, fontWeight: '700', marginBottom: 4 },
+  heading: { fontFamily: font.ui, fontSize: 24, fontWeight: '700', marginBottom: 4 },
   card: {
     borderRadius: radius.card,
     borderWidth: 1,
@@ -205,7 +205,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardLabel: { fontFamily: font.sans, fontSize: 13 },
+  cardLabel: { fontFamily: font.ui, fontSize: 13 },
   cardValue: { fontFamily: font.mono, fontSize: 15, fontWeight: '600' },
   barBg: { height: 6, borderRadius: 3, overflow: 'hidden' },
   barFill: { height: 6, borderRadius: 3 },
@@ -219,7 +219,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
   },
-  retryBtnText: { fontFamily: font.sans, fontSize: 14, fontWeight: '600' },
+  retryBtnText: { fontFamily: font.ui, fontSize: 14, fontWeight: '600' },
   section: { gap: 2, marginTop: 8 },
   sectionLabel: { fontFamily: font.mono, fontSize: 11, letterSpacing: 0.5, marginBottom: 6 },
   row: {
@@ -230,8 +230,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   rowText: { flex: 1 },
-  title: { fontFamily: font.sans, fontSize: 14, fontWeight: '500' },
-  artist: { fontFamily: font.sans, fontSize: 12, marginTop: 1 },
+  title: { fontFamily: font.ui, fontSize: 14, fontWeight: '500' },
+  artist: { fontFamily: font.ui, fontSize: 12, marginTop: 1 },
   more: { fontFamily: font.mono, fontSize: 11, textAlign: 'center', marginTop: 8 },
-  doneText: { fontFamily: font.sans, fontSize: 16, fontWeight: '600', textAlign: 'center', paddingVertical: 16 },
+  doneText: { fontFamily: font.ui, fontSize: 16, fontWeight: '600', textAlign: 'center', paddingVertical: 16 },
 });

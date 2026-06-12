@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform
+  View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Platform,
+  Pressable,
 } from 'react-native';
+import Constants from 'expo-constants';
 import { useTheme } from '../hooks/useTheme';
 import { useStore } from '../lib/store';
 import { login } from '../lib/api';
@@ -36,7 +38,7 @@ export default function LoginScreen() {
           Music
         </Text>
         <Text style={[styles.subtitle, { color: theme.fgMuted }]}>
-          Connect to your server · v1.0.0-b9
+          {`Connect to your server · v${Constants.expoConfig?.version ?? '?'}`}
         </Text>
 
         <View style={styles.fields}>
@@ -68,13 +70,13 @@ export default function LoginScreen() {
 
         {error ? <Text style={[styles.error, { color: theme.accent }]}>{error}</Text> : null}
 
-        <TouchableOpacity
+        <Pressable
           onPress={handleLogin}
           style={[styles.btn, { backgroundColor: theme.accent }]}
-          activeOpacity={0.85}
+
         >
           <Text style={[styles.btnText, { color: theme.onAccent }]}>Connect</Text>
-        </TouchableOpacity>
+        </Pressable>
       </View>
     </KeyboardAvoidingView>
   );

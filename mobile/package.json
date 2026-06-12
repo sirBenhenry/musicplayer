@@ -22,6 +22,7 @@
     "expo-document-picker": "~13.0.3",
     "expo-file-system": "~18.0.12",
     "expo-font": "~13.0.0",
+    "expo-haptics": "~14.0.1",
     "expo-linking": "~7.0.0",
     "expo-router": "~4.0.0",
     "expo-splash-screen": "~0.29.0",

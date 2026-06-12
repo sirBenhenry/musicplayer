@@ -6,8 +6,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
+
   View,
+  Pressable,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -69,8 +70,11 @@ export default function NotificationsScreen() {
     setActioning(id);
     try {
       await dismissNotification(id);
-      setNotifs(n => n.filter(x => x.id !== id));
-      setNotificationCount(Math.max(0, notifs.length - 1));
+      setNotifs(n => {
+        const next = n.filter(x => x.id !== id);
+        setNotificationCount(next.length);
+        return next;
+      });
     } catch (e: any) {
       Alert.alert('Dismiss failed', e.message ?? String(e));
     } finally {
@@ -97,8 +101,11 @@ export default function NotificationsScreen() {
     try {
       await reviewDownload(notif.download_job_id, action);
       await dismissNotification(notif.id);
-      setNotifs(n => n.filter(x => x.id !== notif.id));
-      setNotificationCount(Math.max(0, notifs.length - 1));
+      setNotifs(n => {
+        const next = n.filter(x => x.id !== notif.id);
+        setNotificationCount(next.length);
+        return next;
+      });
     } catch (e: any) {
       Alert.alert('Review failed', e.message ?? String(e));
     } finally {
@@ -123,12 +130,12 @@ export default function NotificationsScreen() {
       }
     >
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
+        <Pressable onPress={() => router.back()} hitSlop={12}>
           <Icon name="arrowLeft" color={theme.fgStrong} size={22} />
-        </TouchableOpacity>
+        </Pressable>
         <Text style={[styles.heading, { color: theme.fgStrong }]}>Notifications</Text>
         {notifs.length > 0 && (
-          <TouchableOpacity
+          <Pressable
             onPress={handleDismissAll}
             disabled={dismissingAll}
             style={[styles.dismissAllBtn, { backgroundColor: theme.bgElev }]}
@@ -137,7 +144,7 @@ export default function NotificationsScreen() {
               ? <ActivityIndicator size="small" color={theme.fgMuted} />
               : <Text style={[styles.dismissAllText, { color: theme.fgMuted }]}>Dismiss all</Text>
             }
-          </TouchableOpacity>
+          </Pressable>
         )}
       </View>
 
@@ -207,29 +214,29 @@ function NotifCard({
         <>
           {isQuality && notif.download_job_id && (
             <View style={styles.reviewBtns}>
-              <TouchableOpacity
+              <Pressable
                 onPress={() => onReview('wrong_song')}
                 style={[styles.reviewBtn, { backgroundColor: '#f4433618' }]}
               >
                 <Text style={[styles.reviewBtnText, { color: '#f44336' }]}>Wrong Song</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
+              </Pressable>
+              <Pressable
                 onPress={() => onReview('bad_quality')}
                 style={[styles.reviewBtn, { backgroundColor: '#ff980018' }]}
               >
                 <Text style={[styles.reviewBtnText, { color: '#ff9800' }]}>Bad Quality</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
+              </Pressable>
+              <Pressable
                 onPress={() => onReview('confirm')}
                 style={[styles.reviewBtn, { backgroundColor: '#4caf5018' }]}
               >
                 <Text style={[styles.reviewBtnText, { color: '#4caf50' }]}>Sounds Good</Text>
-              </TouchableOpacity>
+              </Pressable>
             </View>
           )}
-          <TouchableOpacity onPress={onDismiss} style={styles.dismissBtn}>
+          <Pressable onPress={onDismiss} style={styles.dismissBtn}>
             <Text style={[styles.dismissText, { color: theme.fgSoft }]}>Dismiss</Text>
-          </TouchableOpacity>
+          </Pressable>
         </>
       )}
     </View>

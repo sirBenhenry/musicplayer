@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, FlatList, Pressable, StyleSheet, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
@@ -8,7 +8,6 @@ import { CoverArt } from '../../components/shared/CoverArt';
 import { SongRow } from '../../components/shared/SongRow';
 import { getArtist, getSongs, addArtist, followArtist, unfollowArtist, getStreamUrl, getCoverUrl, downloadAllArtist } from '../../lib/api';
 import { playSong, addToQueue } from '../../lib/audio';
-import { useStore } from '../../lib/store';
 
 export default function ArtistScreen() {
   const theme = useTheme();
@@ -88,9 +87,9 @@ export default function ArtistScreen() {
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
+        <Pressable onPress={() => router.back()} hitSlop={12}>
           <Icon name="arrowLeft" color={theme.fgStrong} size={22} />
-        </TouchableOpacity>
+        </Pressable>
       </View>
 
       <FlatList
@@ -103,36 +102,36 @@ export default function ArtistScreen() {
             <View style={styles.actionRow}>
               {/* Not in library at all */}
               {!followed && (
-                <TouchableOpacity onPress={handleAdd} style={[styles.btn, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                <Pressable onPress={handleAdd} style={[styles.btn, { backgroundColor: theme.surface, borderColor: theme.border }]}>
                   <Text style={[styles.btnText, { color: theme.fgStrong }]}>Add to Library</Text>
-                </TouchableOpacity>
+                </Pressable>
               )}
 
               {/* In library but no monitoring — "In Library" shows current state, tap removes */}
               {followed && !monitored && (
-                <TouchableOpacity onPress={handleUnfollow} style={[styles.btn, { backgroundColor: theme.bgElev, borderColor: theme.borderSoft }]}>
+                <Pressable onPress={handleUnfollow} style={[styles.btn, { backgroundColor: theme.bgElev, borderColor: theme.borderSoft }]}>
                   <Text style={[styles.btnText, { color: theme.fgMuted }]}>In Library  ✕</Text>
-                </TouchableOpacity>
+                </Pressable>
               )}
 
               {/* Follow (when not monitoring) — prominent CTA */}
               {!monitored && (
-                <TouchableOpacity onPress={handleFollow} style={[styles.btn, { backgroundColor: theme.accent, borderColor: 'transparent' }]}>
+                <Pressable onPress={handleFollow} style={[styles.btn, { backgroundColor: theme.accent, borderColor: 'transparent' }]}>
                   <Text style={[styles.btnText, { color: theme.onAccent }]}>Follow</Text>
-                </TouchableOpacity>
+                </Pressable>
               )}
 
               {/* Following — monitoring active, tap to unfollow */}
               {monitored && (
-                <TouchableOpacity onPress={handleUnfollow} style={[styles.btn, { backgroundColor: theme.accent, borderColor: 'transparent' }]}>
+                <Pressable onPress={handleUnfollow} style={[styles.btn, { backgroundColor: theme.accent, borderColor: 'transparent' }]}>
                   <Text style={[styles.btnText, { color: theme.onAccent }]}>Following  ✕</Text>
-                </TouchableOpacity>
+                </Pressable>
               )}
 
               {/* Download all */}
-              <TouchableOpacity onPress={handleDownloadAll} style={[styles.iconBtn, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+              <Pressable onPress={handleDownloadAll} style={[styles.iconBtn, { backgroundColor: theme.surface, borderColor: theme.border }]}>
                 <Icon name="download" color={theme.fgMuted} size={16} />
-              </TouchableOpacity>
+              </Pressable>
             </View>
             <Text style={[styles.sectionHead, { color: theme.fgStrong }]}>Songs</Text>
           </View>
@@ -145,15 +144,12 @@ export default function ArtistScreen() {
             onSwipeQueue={() => addToQueue({ ...item, artist: artist?.name ?? '', duration_sec: item.duration_sec ?? 0 })}
             onPress={() => {
               const url = getStreamUrl(item.navidrome_id);
-              useStore.getState().setQueue(
-                songs.map((s) => ({
-                  ...s,
-                  artist: artist?.name ?? '',
-                  duration_sec: s.duration_sec ?? 0,
-                })),
-                index,
-              );
-              playSong({ ...item, artist: artist?.name ?? '', duration_sec: item.duration_sec ?? 0 }, url, null);
+              const ctx = songs.map((s) => ({
+                ...s,
+                artist: artist?.name ?? '',
+                duration_sec: s.duration_sec ?? 0,
+              }));
+              playSong({ ...item, artist: artist?.name ?? '', duration_sec: item.duration_sec ?? 0 }, url, null, ctx);
             }}
           />
         )}

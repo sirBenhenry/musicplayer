@@ -6,6 +6,7 @@ import { CoverArt } from '../shared/CoverArt';
 import { Icon } from '../shared/Icon';
 import { Waveform } from '../player/Waveform';
 import { togglePlay } from '../../lib/audio';
+import * as haptics from '../../lib/haptics';
 import { radius } from '../../lib/tokens';
 
 interface Props {
@@ -50,6 +51,7 @@ export function MiniPlayer({ onPress }: Props) {
       <Pressable
         onPress={(e) => {
           e.stopPropagation();
+          haptics.tap();
           togglePlay();
         }}
         style={[styles.playBtn, { backgroundColor: theme.accent }]}

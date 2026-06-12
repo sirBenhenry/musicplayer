@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Modal, View, Text, TextInput, TouchableOpacity,
+  Modal, View, Text, TextInput, Pressable,
   StyleSheet, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
@@ -36,7 +36,7 @@ export function TextInputModal({ visible, title, placeholder, defaultValue = '',
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onCancel} />
+      <Pressable style={styles.backdrop} onPress={onCancel} />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.center}
@@ -55,16 +55,16 @@ export function TextInputModal({ visible, title, placeholder, defaultValue = '',
             onSubmitEditing={submit}
           />
           <View style={styles.actions}>
-            <TouchableOpacity onPress={onCancel} style={styles.cancelBtn}>
+            <Pressable onPress={onCancel} style={styles.cancelBtn}>
               <Text style={[styles.cancelText, { color: theme.fgMuted }]}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </Pressable>
+            <Pressable
               onPress={submit}
               disabled={!value.trim()}
               style={[styles.confirmBtn, { backgroundColor: theme.accent, opacity: value.trim() ? 1 : 0.4 }]}
             >
               <Text style={[styles.confirmText, { color: theme.onAccent }]}>{confirmLabel}</Text>
-            </TouchableOpacity>
+            </Pressable>
           </View>
         </View>
       </KeyboardAvoidingView>

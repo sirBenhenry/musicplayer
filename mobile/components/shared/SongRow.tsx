@@ -13,6 +13,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import * as haptics from '../../lib/haptics';
 import { useTheme } from '../../hooks/useTheme';
 import { CoverArt } from './CoverArt';
 import { Icon } from './Icon';
@@ -85,6 +86,7 @@ export const SongRow = React.memo(function SongRow({ song, onPress, onLongPress,
     .onEnd(() => {
       const triggered = translateX.value <= TRIGGER_X;
       if (triggered && onSwipeQueue) {
+        runOnJS(haptics.success)();
         runOnJS(onSwipeQueue)();
         translateX.value = withTiming(0, { duration: 130, easing: Easing.out(Easing.cubic) }, (finished) => {
           if (finished) {
@@ -105,7 +107,7 @@ export const SongRow = React.memo(function SongRow({ song, onPress, onLongPress,
   const inner = (
     <Pressable
       onPress={onPress}
-      onLongPress={onLongPress}
+      onLongPress={onLongPress ? () => { haptics.press(); onLongPress(); } : undefined}
       style={({ pressed }) => [
         styles.row,
         { borderBottomColor: theme.borderSoft, opacity: pressed ? 0.7 : 1 },

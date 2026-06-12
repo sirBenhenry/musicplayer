@@ -52,8 +52,6 @@ interface AppStore {
   // Queue
   queue: Song[];
   queueIndex: number;
-  setQueue: (songs: Song[], index?: number) => void;
-  appendToQueue: (song: Song) => void;
   explicitQueue: Song[];
   setExplicitQueue: (songs: Song[]) => void;
 
@@ -132,8 +130,6 @@ export const useStore = create<AppStore>((set, get) => ({
 
   queue: [],
   queueIndex: 0,
-  setQueue: (songs, index = 0) => set({ queue: songs, queueIndex: index }),
-  appendToQueue: (song) => set((s) => ({ queue: [...s.queue, song] })),
   explicitQueue: [],
   setExplicitQueue: (songs) => set({ explicitQueue: songs }),
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Modal, View, Text, TextInput, FlatList, TouchableOpacity,
+  Modal, View, Text, TextInput, FlatList, Pressable,
   StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
@@ -67,7 +67,7 @@ export function PlaylistPickerModal({ visible, songId, songTitle, onClose, onAdd
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
+      <Pressable style={styles.backdrop} onPress={onClose} />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.center}
@@ -87,16 +87,16 @@ export function PlaylistPickerModal({ visible, songId, songTitle, onClose, onAdd
               keyExtractor={(p) => p.id}
               style={{ maxHeight: 260 }}
               renderItem={({ item }) => (
-                <TouchableOpacity
+                <Pressable
                   onPress={() => handleAdd(item.id, item.name)}
                   disabled={adding !== null}
                   style={[styles.row, { borderBottomColor: theme.borderSoft }]}
-                  activeOpacity={0.7}
+
                 >
                   <Text style={[styles.rowName, { color: theme.fg }]} numberOfLines={1}>{item.name}</Text>
                   <Text style={[styles.rowCount, { color: theme.fgMuted }]}>{item.song_count} songs</Text>
                   {adding === item.id && <ActivityIndicator size="small" color={theme.accent} />}
-                </TouchableOpacity>
+                </Pressable>
               )}
               ListEmptyComponent={
                 <Text style={[styles.empty, { color: theme.fgMuted }]}>No playlists yet</Text>
@@ -117,7 +117,7 @@ export function PlaylistPickerModal({ visible, songId, songTitle, onClose, onAdd
                 returnKeyType="done"
                 onSubmitEditing={handleCreate}
               />
-              <TouchableOpacity
+              <Pressable
                 onPress={handleCreate}
                 disabled={!newName.trim() || adding !== null}
                 style={[styles.createBtn, { backgroundColor: theme.accent, opacity: newName.trim() ? 1 : 0.4 }]}
@@ -125,15 +125,15 @@ export function PlaylistPickerModal({ visible, songId, songTitle, onClose, onAdd
                 {adding === 'new'
                   ? <ActivityIndicator size="small" color={theme.onAccent} />
                   : <Text style={[styles.createBtnText, { color: theme.onAccent }]}>Create</Text>}
-              </TouchableOpacity>
+              </Pressable>
             </View>
           ) : (
-            <TouchableOpacity
+            <Pressable
               onPress={() => setCreating(true)}
               style={[styles.newPlaylistBtn, { borderTopColor: theme.border }]}
             >
               <Text style={[styles.newPlaylistText, { color: theme.accent }]}>+ New playlist</Text>
-            </TouchableOpacity>
+            </Pressable>
           )}
         </View>
       </KeyboardAvoidingView>

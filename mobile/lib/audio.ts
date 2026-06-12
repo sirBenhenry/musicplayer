@@ -7,6 +7,7 @@ import TrackPlayer, {
 } from 'react-native-track-player';
 import { useStore, Song } from './store';
 import * as api from './api';
+import * as haptics from './haptics';
 
 // Debounce token so rapid successive calls don't race
 let _autoQueueFillTimer: ReturnType<typeof setTimeout> | null = null;
@@ -309,6 +310,7 @@ export async function playSong(
 }
 
 export async function togglePlay() {
+  haptics.tap();
   const { state } = await TrackPlayer.getPlaybackState();
   if (state === State.Playing) {
     await TrackPlayer.pause();
@@ -327,6 +329,7 @@ export async function seek(pct: number) {
 }
 
 export async function skipToNext() {
+  haptics.tap();
   await reportSkipIfDaily();
   try {
     await TrackPlayer.skipToNext();
@@ -336,6 +339,7 @@ export async function skipToNext() {
 }
 
 export async function skipToPrev() {
+  haptics.tap();
   const { position } = await TrackPlayer.getProgress();
   if (position > 3) {
     await TrackPlayer.seekTo(0);
@@ -381,6 +385,7 @@ export async function shuffleUpcoming(): Promise<void> {
 }
 
 export async function addToQueue(song: Song) {
+  haptics.success();
   const { explicitQueue } = useStore.getState();
   const current = await TrackPlayer.getActiveTrack();
 

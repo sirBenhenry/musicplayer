@@ -585,6 +585,10 @@ export default function LibraryScreen() {
         visible={actionSong !== null}
         song={actionSong}
         onClose={() => setActionSong(null)}
+        onPlayNext={() => {
+          const full = displaySongs.find(s => s.id === actionSong?.id);
+          if (full) addToQueue(full);
+        }}
         onAddToPlaylist={() => setPickerSong(actionSong)}
         onAssignProfile={() => setProfilePickerSong(actionSong)}
         onDeleted={() => {

@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView, TextInput, Alert, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Switch, ScrollView, TextInput, Alert, ActivityIndicator, Linking } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
@@ -36,7 +36,7 @@ export default function SettingsScreen() {
         .catch(() => setSysLoading(false));
     };
     fetchSysStatus();
-    sysIntervalRef.current = setInterval(fetchSysStatus, 30_000);
+    sysIntervalRef.current = setInterval(fetchSysStatus, 120_000);
 
     return () => {
       clearInterval(interval);
@@ -162,9 +162,9 @@ export default function SettingsScreen() {
       contentContainerStyle={{ paddingBottom: 120 }}
     >
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
+        <Pressable onPress={() => router.back()} hitSlop={12}>
           <Icon name="arrowLeft" color={theme.fgStrong} size={22} />
-        </TouchableOpacity>
+        </Pressable>
         <Text style={[styles.heading, { color: theme.fgStrong }]}>Settings</Text>
       </View>
 
@@ -195,14 +195,14 @@ export default function SettingsScreen() {
           />
         </View>
         <Row label="" theme={theme} last>
-          <TouchableOpacity onPress={saveUrl} style={[styles.saveBtn, { backgroundColor: theme.accentBg }]}>
+          <Pressable onPress={saveUrl} style={[styles.saveBtn, { backgroundColor: theme.accentBg }]}>
             <Text style={{ color: theme.accent, fontSize: 13, fontWeight: '600' }}>Save</Text>
-          </TouchableOpacity>
+          </Pressable>
         </Row>
       </Section>
 
       <Section label="DATA" theme={theme}>
-        <TouchableOpacity
+        <Pressable
           onPress={() => router.push('/notifications')}
           style={[styles.logoutRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
         >
@@ -212,14 +212,14 @@ export default function SettingsScreen() {
               <Text style={{ color: theme.onAccent, fontSize: 11, fontWeight: '700' }}>{notificationCount}</Text>
             </View>
           )}
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/downloads')} style={[styles.logoutRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}>
+        </Pressable>
+        <Pressable onPress={() => router.push('/downloads')} style={[styles.logoutRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}>
           <Text style={{ color: theme.fgStrong, fontSize: 15 }}>Pipeline Activity</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/analysis')} style={[styles.logoutRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}>
+        </Pressable>
+        <Pressable onPress={() => router.push('/analysis')} style={[styles.logoutRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}>
           <Text style={{ color: theme.fgStrong, fontSize: 15 }}>Audio Analysis</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
+        </Pressable>
+        <Pressable
           onPress={updateState === 'available' && latestUrl
             ? () => Linking.openURL(latestUrl)
             : checkForUpdate}
@@ -232,11 +232,11 @@ export default function SettingsScreen() {
           {updateState === 'checking' && <ActivityIndicator size="small" color={theme.accent} />}
           {updateState === 'none' && <Text style={{ color: theme.fgMuted, fontSize: 13 }}>Up to date</Text>}
           {updateState === 'available' && <Icon name="download" color={theme.accent} size={16} />}
-        </TouchableOpacity>
+        </Pressable>
       </Section>
 
       <Section label="IMPORT" theme={theme}>
-        <TouchableOpacity
+        <Pressable
           onPress={() => pickAndImport('songs')}
           disabled={importingFile !== null}
           style={[styles.logoutRow, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}
@@ -248,8 +248,8 @@ export default function SettingsScreen() {
           {importingFile === 'songs'
             ? <ActivityIndicator size="small" color={theme.accent} />
             : <Icon name="download" color={theme.fgSoft} size={16} />}
-        </TouchableOpacity>
-        <TouchableOpacity
+        </Pressable>
+        <Pressable
           onPress={() => pickAndImport('setup')}
           disabled={importingFile !== null}
           style={[styles.logoutRow, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}
@@ -261,8 +261,8 @@ export default function SettingsScreen() {
           {importingFile === 'setup'
             ? <ActivityIndicator size="small" color={theme.accent} />
             : <Icon name="download" color={theme.fgSoft} size={16} />}
-        </TouchableOpacity>
-        <TouchableOpacity
+        </Pressable>
+        <Pressable
           onPress={handleExportLibrary}
           disabled={exporting || importingFile !== null}
           style={[styles.logoutRow, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}
@@ -274,8 +274,8 @@ export default function SettingsScreen() {
           {exporting
             ? <ActivityIndicator size="small" color={theme.accent} />
             : <Icon name="download" color={theme.accent} size={16} />}
-        </TouchableOpacity>
-        <TouchableOpacity
+        </Pressable>
+        <Pressable
           onPress={handleApplyChanges}
           disabled={importingFile !== null || exporting}
           style={[styles.logoutRow, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.borderSoft }]}
@@ -287,8 +287,8 @@ export default function SettingsScreen() {
           {importingFile === 'apply'
             ? <ActivityIndicator size="small" color={theme.accent} />
             : <Icon name="refresh" color={theme.fgSoft} size={16} />}
-        </TouchableOpacity>
-        <TouchableOpacity
+        </Pressable>
+        <Pressable
           onPress={() => Linking.openURL(getImportGuideUrl())}
           style={[styles.logoutRow, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
         >
@@ -297,7 +297,7 @@ export default function SettingsScreen() {
             <Text style={{ color: theme.fgMuted, fontSize: 12, marginTop: 2 }}>Format reference — musicapp_import_guide.md</Text>
           </View>
           <Icon name="download" color={theme.accent} size={16} />
-        </TouchableOpacity>
+        </Pressable>
       </Section>
 
       <Section label="SYSTEM" theme={theme}>
@@ -394,7 +394,7 @@ export default function SettingsScreen() {
       </Section>
 
       <Section label="DEBUG" theme={theme}>
-        <TouchableOpacity
+        <Pressable
           onPress={async () => {
             setSendingLogs(true);
             try {
@@ -414,8 +414,8 @@ export default function SettingsScreen() {
           {sendingLogs
             ? <ActivityIndicator size="small" color={theme.accent} />
             : <Icon name="download" color={theme.fgSoft} size={16} />}
-        </TouchableOpacity>
-        <TouchableOpacity
+        </Pressable>
+        <Pressable
           onPress={async () => {
             await clearLogs();
             Alert.alert('Cleared', 'Log buffer cleared.');
@@ -423,16 +423,16 @@ export default function SettingsScreen() {
           style={styles.logoutRow}
         >
           <Text style={{ color: theme.fgMuted, fontSize: 15 }}>Clear logs</Text>
-        </TouchableOpacity>
+        </Pressable>
       </Section>
 
       <Section label="ACCOUNT" theme={theme}>
-        <TouchableOpacity
+        <Pressable
           onPress={() => { clearAuth(); router.replace('/login'); }}
           style={styles.logoutRow}
         >
           <Text style={{ color: theme.accent, fontSize: 15, fontWeight: '500' }}>Sign out</Text>
-        </TouchableOpacity>
+        </Pressable>
       </Section>
     </ScrollView>
   );

@@ -1,9 +1,8 @@
-# HANDOVER.md — Session handoff (2026-06-12)
+# HANDOVER.md — Session handoff (2026-06-12, updated after frontend batch landed)
 
-**Read this first, then FIXPLAN.md.** You are picking up an in-progress repair + UI-overhaul of this
-app, mid-way through the **mobile frontend implementation session**. The previous session (Claude
-Fable 5, local on Ben's machine with LAN access) did a full audit, wrote `FIXPLAN.md` (the master
-plan — every item has an ID), revived the production system twice, and started implementing.
+**Read this first, then FIXPLAN.md.** You are picking up an in-progress repair of this app. The
+audit is done, `FIXPLAN.md` is the master plan (every item has an ID), and the **entire mobile
+frontend overhaul (Phase 2, MOB-1..18 + haptics) is implemented, typechecked clean, and committed**.
 **Continue exactly where this file says; do not re-audit.**
 
 ## Operating context & constraints
@@ -13,9 +12,17 @@ plan — every item has an ID), revived the production system twice, and started
 - Ben's decisions already made (don't re-ask): skip = next-press on daily playlists (no undo toast); web_search LLM hotfix dropped (DSC-6 optional, Claude-provider-gated); disk cleanup approved/done; priorities = everything; **UI style direction stays (terracotta/sage, Geist/InstrumentSerif tokens) — execution quality goes up**; every visible control must work; every feature needs UI; **add haptics for premium feel** (see below); offline downloads = FIXPLAN Phase 6 OFFLINE-1.
 - Live-system facts you can't see from code: deployed container code is STALE vs repo (6 files, see FIXPLAN OPS-2); DB has 2,327 songs / 353 assigned (cleanup = CLN-9); 271 open notifications; host disk was full (fixed; prevention OPS-3/4 still TODO); NFS mount mismatch — never `docker compose up` (see FIXPLAN live-findings #6).
 
-## State of the working tree (all UNCOMMITTED before this handoff commit)
+## State of the repo
 
-### Done in this session — mobile frontend (Phase 2 of FIXPLAN), NOT yet typechecked or built
+### DONE & COMMITTED — mobile frontend (Phase 2 of FIXPLAN, MOB-1..18, typecheck clean)
+
+All of the below plus: `mobile/lib/haptics.ts` created and wired (tabs, radial switcher, MiniPlayer
+play/pause, FullPlayer seek/keep/shuffle, action-sheet delete warn, profile-assign success);
+`playlist/[id].tsx` (4-arg playSong rows/playAll, shuffle wired), `userplaylist/[id].tsx` (null
+playlistId + context), `artist/[id].tsx` (context), `deletion.tsx` (flat API shape), `settings.tsx`
+(120s poll), `notifications.tsx` (badge math), `login.tsx` (expo-constants version), full
+TouchableOpacity→Pressable sweep (zero remaining), dead `setQueue`/`appendToQueue` removed from
+store.ts. NOT yet run on a device — APK build + manual pass is the verification gate (see debt below).
 
 | File | What changed |
 |---|---|
@@ -36,57 +43,25 @@ plan — every item has an ID), revived the production system twice, and started
 
 ### IMMEDIATE NEXT STEPS (in order — start here)
 
-1. **Typecheck everything just written** (nothing has been verified):
-   `cd mobile && npx tsc --noEmit` — fix all errors. Likely suspects: unused imports left in
-   `library.tsx`/`QueueSheet.tsx` (e.g. `SectionList`, possibly `useStore` usages), prop mismatches in
-   `FullPlayer.tsx` against `PlaylistPickerModal` (its props: visible, songId, songTitle, onClose,
-   onAdded(name)), `Icon` name typing (`IconName` exported from `components/shared/Icon.tsx`; valid
-   names listed in CLAUDE.md — `notification` exists).
-2. **`library.tsx`: wire "Play next"** — pass `onPlayNext` to its `<SongActionSheet>`: find the full
-   song in `displaySongs` by `actionSong.id` and call `addToQueue(song)`. (Import already added.)
-3. **`mobile/app/playlist/[id].tsx`** — (a) row tap + `playAll`: switch to
-   `playSong(song, url, id, contextSongs)` per new signature, delete the manual
-   `useStore.getState().setQueue(...)` calls; (b) **wire the dead shuffle button** (MOB-6):
-   Fisher-Yates `playableSongs` → `playSong(shuffled[0], getStreamUrl(...), id, shuffled)`.
-4. **`mobile/app/userplaylist/[id].tsx`** — pass context songs (filter `navidrome_id`), **change
-   playlistId arg to `null`** (currently passes the UserPlaylist id — pollutes daily mechanics,
-   MOB-4); TouchableOpacity→Pressable.
-5. **`mobile/app/artist/[id].tsx`** — pass context songs to `playSong`; TouchableOpacity→Pressable.
-6. **`mobile/app/deletion.tsx`** — MOB-7: API returns FLAT `{song_id, title, artist_name, marked_at}`
-   — render `item.title`/`item.artist_name` (not `item.song?.…`), `keyExtractor={(p) => p.song_id}`.
-   Also add `useFocusEffect` reload + empty-state polish.
-7. **`mobile/app/settings.tsx`** — system-status poll 30s→120s (BE-21 mobile half, line ~39);
-   TouchableOpacity→Pressable sweep.
-8. **`mobile/app/notifications.tsx`** — MOB-16 badge math (recompute count from updated list inside
-   the setState); Pressable sweep.
-9. **`mobile/app/login.tsx`** — MOB-14: version from `expo-constants` (`Constants.expoConfig?.version`),
-   not hardcoded `v1.0.0-b9`; Pressable sweep.
-10. **`mobile/app/downloads.tsx`, `history.tsx`, `_layout.tsx` ErrorBoundary** — Pressable sweep
-    (MOB-18). Use unified header pattern (mono label + heading) where trivial.
-11. **HAPTICS (Ben explicitly wants this — "premium feel").** Check `mobile/package.json` for
-    `expo-haptics`; if missing: `npm install expo-haptics` (bare workflow — autolinks on next gradle
-    build, no config needed). Create `mobile/lib/haptics.ts`:
-    ```ts
-    import * as Haptics from 'expo-haptics';
-    export const tap = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    export const press = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    export const success = () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    export const warn = () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-    export const selection = () => Haptics.selectionAsync().catch(() => {});
-    ```
-    Wire: `tap()` on play/pause + mini-player play + skip prev/next; `selection()` on tab switches,
-    radial-switcher hover change (`updateHover` in `(tabs)/_layout.tsx` when hoveredId changes — it
-    already tracks changes), seek release, filter chips; `press()` on long-press sheet/action-sheet
-    open and radial open (`openRadial`); `success()` on keep-heart, flag keep, profile assigned,
-    download queued, playlist created; `warn()` on delete confirms and skip-marked-for-deletion.
-    Keep it tasteful — interactions, not scrolls.
-12. **Final pass:** `npx tsc --noEmit` clean → commit (`MOB-* frontend overhaul batch 1`) → push.
-13. **Then continue with FIXPLAN implementation order step 1** (backend: BE-1, BE-2, BE-21 →
-    OPS-2 redeploy — needs LAN; if cloud, do the code edits + commit, leave deploy to a local
-    session and note it in this file under "Pending deploy").
-14. After backend code lands: remaining FIXPLAN phases in the listed order; check items off in
-    FIXPLAN.md by appending ` ✅ (date)` to the item heading when implemented (and note "deployed"
-    separately when actually shipped to the container/APK).
+Work **one FIXPLAN item (or tight batch) at a time: implement → typecheck/verify → commit → push →
+check off in FIXPLAN.md (` ✅ (date)` on the heading) → update this file**. That is Ben's standing
+instruction.
+
+1. **BE-1** — `GET /artists/{id}` 500 (missing `monitored` field). Code fix + deploy via Portainer
+   tar-upload (CLAUDE.md workflow; LAN available).
+2. **BE-2** — `jobs/eod.py` line ~312 `list | set` TypeError (kills artist prompts).
+3. **BE-21** — `system-status` sync `os.walk` over NFS blocks the event loop (mobile half — 120s
+   poll — already done).
+4. **OPS-2** — redeploy ALL drifted files to the container (6 files listed in FIXPLAN OPS-2) so
+   container == repo, then restart + smoke-test `/health`, `/artists/{id}`.
+5. **OPS-3, BE-9, BE-10** — tmp janitor; library_sync must not delete songs on transient Navidrome
+   errors; notification dedup (271 open).
+6. **BE-3/4, SRC-2** — soulseek result-state + path fixes; retry cap.
+7. Backend perf batch **BE-5/6/12/13/17**, then DSC/SRC batches, then CLN items (CLN-9 is
+   interactive with Ben — never bulk-delete autonomously), then **Phase 6 OFFLINE-1**.
+8. **APK build gate** (any time Ben wants to test the new frontend): `cd mobile/android &&
+   ./gradlew assembleRelease` → bump `mobile/app.json` version → `gh release create` (MANDATORY)
+   → `adb install`. Then the manual on-device pass per FIXPLAN verify steps for MOB-1..18.
 
 ### Verification debt (cannot be done in cloud — needs Ben or local session)
 - Nothing implemented this session has run on a device. After typecheck+build: full manual pass per

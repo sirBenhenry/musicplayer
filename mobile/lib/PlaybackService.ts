@@ -41,7 +41,7 @@ export async function PlaybackService() {
     await reportSkipIfDaily();
     TrackPlayer.skipToNext().catch(() => {});
   });
-  TrackPlayer.addEventListener(Event.RemotePreviousTrack, async () => {
+  TrackPlayer.addEventListener(Event.RemotePrevious, async () => {
     const { position } = await TrackPlayer.getProgress();
     if (position > 3) {
       await TrackPlayer.seekTo(0);

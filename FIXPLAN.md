@@ -490,7 +490,7 @@ postprocessors plus `"writethumbnail": True` in `ydl_opts`. Prefer (b) — bette
 > end). All bugs below come from those mirrors drifting from RNTP. The repair strategy is:
 > **derive, don’t mirror** — always locate tracks in RNTP by `songId`, never by arithmetic.
 
-### MOB-1 — Tapping a song can play a different song (CRITICAL)
+### MOB-1 — Tapping a song can play a different song (CRITICAL) ✅ (2026-06-12)
 **Files:** `mobile/lib/audio.ts` `playSong` (lines 213–247); callers:
 `mobile/app/(tabs)/index.tsx` `playFirst` (line 76–81), `mobile/app/userplaylist/[id].tsx` row
 `onPress` (line 65–69).
@@ -525,7 +525,7 @@ do `useStore.setState({ queue: merged, queueIndex: targetIdx })` itself — it a
 **Verify:** from a fresh app start, tap the home hero play → correct song; open a user playlist and
 tap song 3 → song 3 plays; library still works.
 
-### MOB-2 — Skip-to-delete is not implemented at all (CRITICAL — core product mechanic)
+### MOB-2 — Skip-to-delete is not implemented at all (CRITICAL — core product mechanic) ✅ (2026-06-12)
 **Decision (Ben):** pressing next on a daily-playlist song before listen-through counts as a skip →
 marked for end-of-day deletion. (The playlist screen hint text already promises exactly this.)
 **Files:** `mobile/lib/audio.ts`, `mobile/lib/PlaybackService.ts`, `mobile/lib/api.ts` (`postSkip`
@@ -554,7 +554,7 @@ Call `await reportSkipIfDaily()` at the top of `skipToNext()` in `audio.ts` AND 
 backend `pending_deletions` gets a row; `/playback/skip` 204 in backend logs. Skipping a library song
 sends nothing.
 
-### MOB-3 — Queue index arithmetic corrupts the queue (HIGH)
+### MOB-3 — Queue index arithmetic corrupts the queue (HIGH) ✅ (2026-06-12)
 **Files:** `mobile/lib/audio.ts` (`addToQueue` lines 295–329, `removeFromExplicitQueue` 331–340,
 `moveInExplicitQueue` 342–357), `mobile/components/player/QueueSheet.tsx` `handleRemoveAutoSong`
 (lines 61–73).
@@ -587,7 +587,7 @@ Edge: duplicate songIds in queue — acceptable for now (single-user); note it.
 auto song and an explicit song, reorder explicit songs → playback order in RNTP matches the sheet, no
 playlist songs vanish.
 
-### MOB-4 — Every queued track inherits the daily playlist id (HIGH — corrupts skip/keep stats)
+### MOB-4 — Every queued track inherits the daily playlist id (HIGH — corrupts skip/keep stats) ✅ (2026-06-12)
 **File:** `mobile/lib/audio.ts` `playSong` line 232 (`merged.map(s => _buildTrack(s, playlistId))`).
 **Problem:** when playing from a daily playlist, the spliced-in `explicitQueue` songs (library songs)
 also get `playlistId` → their progress/listen-through/skip events are attributed to the daily
@@ -601,7 +601,7 @@ await TrackPlayer.add(merged.map(s =>
 (With MOB-1’s `base` = contextSongs.)
 **Verify:** queue a library song while a daily playlist plays; let it finish → no flag appears on it.
 
-### MOB-5 — Dead player controls (HIGH UX — “buttons that do nothing”)
+### MOB-5 — Dead player controls (HIGH UX — “buttons that do nothing”) ✅ (2026-06-12)
 **File:** `mobile/components/player/FullPlayer.tsx`.
 Four controls render but do nothing:
 1. **Shuffle** (line 214): implement queue shuffle of the *remaining* tracks:
@@ -628,12 +628,12 @@ Four controls render but do nothing:
    in `_query_by_vector`.)
 **Verify:** each control visibly does something and survives app restart where applicable.
 
-### MOB-6 — Playlist screen’s shuffle button does nothing (MEDIUM)
+### MOB-6 — Playlist screen’s shuffle button does nothing (MEDIUM) ✅ (2026-06-12)
 **File:** `mobile/app/playlist/[id].tsx` lines 162–166.
 **Fix:** onPress: shuffle a copy of `playableSongs` (Fisher-Yates), then `playSong(shuffled[0],
 getStreamUrl(shuffled[0].navidrome_id), id, shuffled)` (per MOB-1 signature).
 
-### MOB-7 — Pending-deletion screen renders empty rows (MEDIUM)
+### MOB-7 — Pending-deletion screen renders empty rows (MEDIUM) ✅ (2026-06-12)
 **File:** `mobile/app/deletion.tsx` lines 40–57.
 **Problem:** API returns flat `{song_id, title, artist_name, marked_at}` (see
 `backend/app/api/deletion.py` `PendingItem`), but the screen reads `item.song?.title` /
@@ -641,7 +641,7 @@ getStreamUrl(shuffled[0].navidrome_id), id, shuffled)` (per MOB-1 signature).
 **Fix:** `keyExtractor={(p) => p.song_id}`; render `item.title` and `item.artist_name`.
 **Verify:** skip a daily song (after MOB-2), open Pending deletion → real titles; Keep removes row.
 
-### MOB-8 — Home screen is stale (MEDIUM)
+### MOB-8 — Home screen is stale (MEDIUM) ✅ (2026-06-12)
 **File:** `mobile/app/(tabs)/index.tsx` lines 53–63.
 **Problem:** data loads only when `activeProfileId` changes — returning from a playlist, or after the
 nightly generation, the screen keeps yesterday’s state until profile switch/app restart.
@@ -650,13 +650,13 @@ instead of plain `useEffect`; ALSO add `RefreshControl` to the ScrollView for pu
 the `activeProfileId` dependency.
 **Verify:** flag a song in a playlist, go back → hero/cards reflect it after refocus.
 
-### MOB-9 — Daily-playlist slot labels never match (LOW)
+### MOB-9 — Daily-playlist slot labels never match (LOW) ✅ (2026-06-12)
 **File:** `mobile/app/(tabs)/library.tsx` lines 26–31.
 **Problem:** keys are `close_match/broader_taste/new_genre/artist_of_day` but backend slots are
 `close/broader/genre/artist` → badges always show the raw slot uppercased.
 **Fix:** replace the map keys with `close`, `broader`, `genre`, `artist`.
 
-### MOB-10 — Genre prompt uses iOS-only `Alert.prompt` and can’t pick an existing profile (MEDIUM)
+### MOB-10 — Genre prompt uses iOS-only `Alert.prompt` and can’t pick an existing profile (MEDIUM) ✅ (2026-06-12)
 **File:** `mobile/app/(tabs)/index.tsx` lines 165–180.
 **Problem:** on Android (`Alert.prompt` undefined) accepting a genre prompt silently creates a new
 profile named after the genre — the user can never type a name or choose an existing profile. Project
@@ -669,7 +669,7 @@ its “All Music only” row repurposed — better: add a state
 calls `handleNotifAction(notif, true, 'new', typedName)`. Keep `artist_prompt` accept as-is.
 **Verify:** on Android, accepting a genre prompt lets you choose target profile or name a new one.
 
-### MOB-11 — Queue sheet hides the upcoming playlist songs (MEDIUM)
+### MOB-11 — Queue sheet hides the upcoming playlist songs (MEDIUM) ✅ (2026-06-12)
 **File:** `mobile/components/player/QueueSheet.tsx`.
 **Problem:** the sheet shows only `explicitQueue` + `autoQueue`. When a playlist is playing, the
 actual next tracks (rest of the playlist) are invisible → “queue is empty” while music clearly has a
@@ -680,7 +680,7 @@ Render a third section `FROM PLAYLIST` (non-draggable, no remove button) between
 auto sections. After MOB-3 the `queue` mirror is rebuilt from RNTP so this is accurate.
 **Verify:** play a playlist → queue sheet lists its remaining songs.
 
-### MOB-12 — Library cache hard-refetches forever if the stamp endpoint fails (MEDIUM, resilience)
+### MOB-12 — Library cache hard-refetches forever if the stamp endpoint fails (MEDIUM, resilience) ✅ (2026-06-12)
 **File:** `mobile/app/(tabs)/library.tsx` `refreshIfStale` (lines 242–265).
 **Problem:** `const stale = !serverStamp || …` — any stamp failure (offline, old backend, 500) triggers
 a full 5000-song + artists refetch, every 15 s. This is what was happening in production against the
@@ -694,7 +694,7 @@ if (!stale) return;
 **Verify:** with backend stopped, the app idles quietly on cache; with backend up, edits propagate
 within 15 s.
 
-### MOB-13 — `api.req` discards backend error details (LOW)
+### MOB-13 — `api.req` discards backend error details (LOW) ✅ (2026-06-12)
 **File:** `mobile/lib/api.ts` lines 15–24.
 **Fix:** include the response body’s `detail` when present:
 ```ts
@@ -706,12 +706,12 @@ if (!r.ok) {
 ```
 **Verify:** importing a non-Spotify URL shows the real message (“Must be a Spotify URL…”).
 
-### MOB-14 — Login screen hardcodes version `v1.0.0-b9` (LOW)
+### MOB-14 — Login screen hardcodes version `v1.0.0-b9` (LOW) ✅ (2026-06-12)
 **File:** `mobile/app/login.tsx` line 39.
 **Fix:** `import Constants from 'expo-constants'` →
 `` `Connect to your server · v${Constants.expoConfig?.version ?? '?'}` ``.
 
-### MOB-15 — ProfileMenu: unsupported `oklch()` color and emoji icons (LOW, visual)
+### MOB-15 — ProfileMenu: unsupported `oklch()` color and emoji icons (LOW, visual) ✅ (2026-06-12)
 **File:** `mobile/components/profile/ProfileMenu.tsx` line 97 + `items` array (lines 51–70).
 **Problem:** React Native cannot parse `oklch(70% 0.08 ${hue})` → the avatar circle renders with no
 background. The menu icons are unicode glyphs (◷ ◈ ⚙ ✕ ⌂ ›) — violates the project’s Icon-component
@@ -721,17 +721,17 @@ a shared util or duplicate); replace icons: history → `<Icon name="history">`,
 `<Icon name="artist">`, settings → `<Icon name="settings">`, close ✕ → `<Icon name="close">`,
 chevron › → `<Icon name="chevronRight">`, hint ⌂ → `<Icon name="home" size={12}>`.
 
-### MOB-16 — Notification badge math uses stale state (LOW)
+### MOB-16 — Notification badge math uses stale state (LOW) ✅ (2026-06-12)
 **File:** `mobile/app/notifications.tsx` lines 73 & 101 (`setNotificationCount(Math.max(0,
 notifs.length - 1))` inside closures over old `notifs`).
 **Fix:** compute from the updated list: `setNotifs(n => { const next = n.filter(x => x.id !== id);
 setNotificationCount(next.length); return next; });`
 
-### MOB-17 — Deprecated `TrackPlayer.getState()` (LOW)
+### MOB-17 — Deprecated `TrackPlayer.getState()` (LOW) ✅ (2026-06-12)
 **File:** `mobile/lib/audio.ts` `togglePlay` line 250.
 **Fix:** `const { state } = await TrackPlayer.getPlaybackState();`
 
-### MOB-18 — TouchableOpacity → Pressable sweep (LOW, consistency; fold into design phase if preferred)
+### MOB-18 — TouchableOpacity → Pressable sweep (LOW, consistency; fold into design phase if preferred) ✅ (2026-06-12)
 Project rule: `Pressable` everywhere. Files still using `TouchableOpacity`: `app/artist/[id].tsx`,
 `app/userplaylist/[id].tsx`, `app/settings.tsx`, `app/downloads.tsx`, `app/notifications.tsx`,
 `app/history.tsx`, `app/deletion.tsx`, `app/login.tsx`, `components/profile/ProfileMenu.tsx`,

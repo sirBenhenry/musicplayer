@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  Modal, View, Text, TouchableOpacity, StyleSheet,
+  Modal, View, Text, Pressable, StyleSheet,
   ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
@@ -54,7 +54,7 @@ export function ArtistImportModal({ artist, onClose, onImported }: Props) {
 
   return (
     <Modal visible={!!artist} transparent animationType="fade" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
+      <Pressable style={styles.backdrop} onPress={onClose} />
       <View style={styles.center} pointerEvents="box-none">
         <View style={[styles.sheet, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           {/* Artist header */}
@@ -114,10 +114,10 @@ export function ArtistImportModal({ artist, onClose, onImported }: Props) {
 
           {/* Actions */}
           <View style={styles.actions}>
-            <TouchableOpacity onPress={onClose} style={styles.cancelBtn}>
+            <Pressable onPress={onClose} style={styles.cancelBtn}>
               <Text style={[styles.cancelText, { color: theme.fgMuted }]}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </Pressable>
+            <Pressable
               onPress={handleConfirm}
               disabled={noneSelected || loading}
               style={[
@@ -128,7 +128,7 @@ export function ArtistImportModal({ artist, onClose, onImported }: Props) {
               {loading
                 ? <ActivityIndicator size="small" color={theme.onAccent} />
                 : <Text style={[styles.confirmText, { color: theme.onAccent }]}>Add</Text>}
-            </TouchableOpacity>
+            </Pressable>
           </View>
         </View>
       </View>
@@ -142,7 +142,7 @@ function CheckRow({
   label: string; sublabel: string; checked: boolean; onToggle: () => void; theme: any;
 }) {
   return (
-    <TouchableOpacity onPress={onToggle} style={styles.checkRow} activeOpacity={0.7}>
+    <Pressable onPress={onToggle} style={styles.checkRow}>
       <View style={[
         styles.checkbox,
         { borderColor: checked ? theme.accent : theme.border },
@@ -154,7 +154,7 @@ function CheckRow({
         <Text style={[styles.checkLabel, { color: theme.fgStrong }]}>{label}</Text>
         <Text style={[styles.checkSub, { color: theme.fgMuted }]}>{sublabel}</Text>
       </View>
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 

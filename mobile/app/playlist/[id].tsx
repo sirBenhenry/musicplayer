@@ -94,15 +94,23 @@ export default function PlaylistScreen() {
     }
   };
 
+  const ctxSongs = () =>
+    playableSongs.map((s) => ({ ...s, artist: s.artist ?? '', duration_sec: s.duration_sec ?? 0 }));
+
   const playAll = () => {
     if (!playableSongs.length) return;
-    const first = playableSongs[0];
-    useStore.getState().setQueue(
-      playableSongs.map((s) => ({ ...s, artist: s.artist ?? '', duration_sec: s.duration_sec ?? 0 })),
-      0,
-    );
-    playSong({ ...first, artist: first.artist ?? '', duration_sec: first.duration_sec ?? 0 },
-      getStreamUrl(first.navidrome_id), id);
+    const ctx = ctxSongs();
+    playSong(ctx[0], getStreamUrl(ctx[0].navidrome_id), id, ctx);
+  };
+
+  const playShuffled = () => {
+    if (!playableSongs.length) return;
+    const ctx = ctxSongs();
+    for (let i = ctx.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ctx[i], ctx[j]] = [ctx[j], ctx[i]];
+    }
+    playSong(ctx[0], getStreamUrl(ctx[0].navidrome_id), id, ctx);
   };
 
   if (loading) {
@@ -160,6 +168,7 @@ export default function PlaylistScreen() {
             <Text style={[styles.btnPrimaryText, { color: '#fff' }]}>Play</Text>
           </Pressable>
           <Pressable
+            onPress={playShuffled}
             style={({ pressed }) => [styles.btnGhost, { borderColor: theme.borderSoft, opacity: pressed ? 0.7 : 1 }]}
           >
             <Icon name="shuffle" color={theme.fgMuted} size={18} />
@@ -222,12 +231,8 @@ export default function PlaylistScreen() {
               key={song.id ?? `${song.artist}-${song.title}-${i}`}
               onPress={() => {
                 if (!playable) return;
-                useStore.getState().setQueue(
-                  playableSongs.map((s) => ({ ...s, artist: s.artist ?? '', duration_sec: s.duration_sec ?? 0 })),
-                  playableSongs.indexOf(song),
-                );
                 playSong({ ...song, artist: song.artist ?? '', duration_sec: song.duration_sec ?? 0 },
-                  getStreamUrl(song.navidrome_id), id);
+                  getStreamUrl(song.navidrome_id), id, ctxSongs());
               }}
               onLongPress={() => {
                 if (!song.id || !id) return;

@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useCallback, useState } from 'react';
+import { View, Text, FlatList, Pressable, StyleSheet, Alert } from 'react-native';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
 import { Icon } from '../../components/shared/Icon';
@@ -17,12 +17,13 @@ export default function UserPlaylistScreen() {
   const [playlist, setPlaylist] = useState<any>(null);
   const [renameVisible, setRenameVisible] = useState(false);
 
-  const reload = () => {
+  const reload = useCallback(() => {
     if (!id) return;
     getUserPlaylist(id).then(setPlaylist).catch(() => {});
-  };
+  }, [id]);
 
-  useEffect(() => { reload(); }, [id]);
+  // Focus reload — newly downloaded import songs appear when returning
+  useFocusEffect(useCallback(() => { reload(); }, [reload]));
 
   const handleRemoveSong = (songId: string, title: string) => {
     Alert.alert('Remove song', `Remove "${title}" from this playlist?`, [
@@ -40,19 +41,28 @@ export default function UserPlaylistScreen() {
   };
 
   const songs: any[] = playlist?.songs ?? [];
+  // Playable context — user playlists are NOT daily playlists: playlistId stays null
+  const ctxSongs = () =>
+    songs
+      .filter((s) => s.navidrome_id)
+      .map((s) => ({ ...s, artist: s.artist ?? '', duration_sec: s.duration_sec ?? 0 }));
 
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
+        <Pressable onPress={() => router.back()} hitSlop={12} style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}>
           <Icon name="arrowLeft" color={theme.fgStrong} size={22} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.titleBlock} onLongPress={() => setRenameVisible(true)} hitSlop={8} activeOpacity={0.8}>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [styles.titleBlock, { opacity: pressed ? 0.8 : 1 }]}
+          onLongPress={() => setRenameVisible(true)}
+          hitSlop={8}
+        >
           <Text style={[styles.title, { color: theme.fgStrong }]} numberOfLines={1}>
             {playlist?.name ?? '…'}
           </Text>
           <Text style={[styles.meta, { color: theme.fgMuted }]}>{songs.length} songs · hold to rename</Text>
-        </TouchableOpacity>
+        </Pressable>
       </View>
 
       <FlatList
@@ -64,10 +74,16 @@ export default function UserPlaylistScreen() {
             index={index}
             onPress={() => {
               if (!item.navidrome_id) return;
-              const url = getStreamUrl(item.navidrome_id);
-              playSong({ ...item, duration_sec: item.duration_sec ?? 0 }, url, id);
+              const ctx = ctxSongs();
+              playSong(
+                { ...item, artist: item.artist ?? '', duration_sec: item.duration_sec ?? 0 },
+                getStreamUrl(item.navidrome_id), null, ctx,
+              );
             }}
-            onSwipeQueue={() => addToQueue({ ...item, navidrome_id: item.navidrome_id ?? '', duration_sec: item.duration_sec ?? 0 })}
+            onSwipeQueue={() => {
+              if (!item.navidrome_id) return;
+              addToQueue({ ...item, navidrome_id: item.navidrome_id, duration_sec: item.duration_sec ?? 0 });
+            }}
             onLongPress={() => handleRemoveSong(item.id, item.title)}
           />
         )}
@@ -105,7 +121,6 @@ export default function UserPlaylistScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { paddingHorizontal: 20, paddingBottom: 16, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  back: { fontSize: 24, marginTop: 4 },
   titleBlock: { flex: 1 },
   title: { fontSize: 24, fontWeight: '600', letterSpacing: -0.015, lineHeight: 30 },
   meta: { fontSize: 12, marginTop: 4 },

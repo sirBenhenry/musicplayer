@@ -4,6 +4,7 @@ import { useTheme } from '../../hooks/useTheme';
 import { Icon } from './Icon';
 import { font, radius } from '../../lib/tokens';
 import { deleteSong } from '../../lib/api';
+import * as haptics from '../../lib/haptics';
 
 export interface SongAction {
   id: string;
@@ -27,6 +28,7 @@ export function SongActionSheet({ visible, song, onClose, onAddToPlaylist, onAss
 
   const handleDelete = () => {
     if (!song) return;
+    haptics.warn();
     Alert.alert(
       'Delete song',
       `Permanently delete "${song.title}"? This removes the file and cannot be undone.`,
