@@ -1,4 +1,5 @@
 """Playlist 1 — Close Match: artists similar to current profile library."""
+import asyncio
 import json
 import logging
 import random
@@ -22,10 +23,16 @@ async def generate(
     library_artists: list[str],
     rejected: list[dict],
     llm: LLMProvider,
+    candidates: list[dict] | None = None,
 ) -> list[dict]:
-    """Return up to 9 tracks for Playlist 1 (close match)."""
-    seed_artists = _sample_artists(profile_songs, library_artists, n=10)
-    candidates = await _fetch_candidates(seed_artists, library_artists, rejected)
+    """Return up to 9 tracks for Playlist 1 (close match).
+
+    `candidates` may be passed in by the pipeline so close_match + broader_taste
+    share one last.fm/ListenBrainz fetch instead of doing it twice (DSC-4).
+    """
+    if candidates is None:
+        seed_artists = _sample_artists(profile_songs, library_artists, n=10)
+        candidates = await _fetch_candidates(seed_artists, library_artists, rejected)
 
     rejected_str = ", ".join(f"{r['artist']} - {r['title']}" for r in rejected[:50])
 
@@ -74,6 +81,9 @@ def _sample_artists(profile_songs: list[dict], library_artists: list[str], n: in
     return top
 
 
+_MAX_SIMILAR_ARTISTS = 25  # cap before fetching top tracks (DSC-3)
+
+
 async def _fetch_candidates(
     seed_artists: list[str],
     library_artists: list[str],
@@ -81,29 +91,36 @@ async def _fetch_candidates(
 ) -> list[dict]:
     rejected_set = {(r["artist"].lower(), r["title"].lower()) for r in rejected}
     library_set = {a.lower() for a in library_artists}
+
+    # 1. Collect similar-artist names concurrently (last.fm + ListenBrainz per seed).
+    seeds = seed_artists[:8]
+    sim_results = await asyncio.gather(
+        *[lastfm.get_similar_artists(a, limit=20) for a in seeds],
+        *[listenbrainz.get_similar_artists(a, count=20) for a in seeds],
+    )
+    similar_names: list[str] = []
+    seen_names: set[str] = set()
+    for batch in sim_results:
+        for s in batch:
+            name = s.get("name") or s.get("artist_name") or ""
+            key = name.lower()
+            if name and key not in library_set and key not in seen_names:
+                seen_names.add(key)
+                similar_names.append(name)
+
+    # 2. Cap before the expensive per-artist top-track fetch.
+    capped = similar_names[:_MAX_SIMILAR_ARTISTS]
+
+    # 3. Fetch top tracks for all capped artists concurrently.
+    top_lists = await asyncio.gather(
+        *[lastfm.get_top_tracks(name, limit=3) for name in capped]
+    )
     candidates: list[dict] = []
-
-    for artist in seed_artists[:8]:
-        similar_lf = await lastfm.get_similar_artists(artist, limit=20)
-        similar_lb = await listenbrainz.get_similar_artists(artist, count=20)
-
-        for s in similar_lf:
-            name = s.get("name", "")
-            if name.lower() not in library_set:
-                top = await lastfm.get_top_tracks(name, limit=3)
-                for t in top:
-                    entry = {"artist": name, "title": t.get("name", "")}
-                    if (name.lower(), entry["title"].lower()) not in rejected_set:
-                        candidates.append(entry)
-
-        for s in similar_lb:
-            name = s.get("artist_name") or s.get("name", "")
-            if name and name.lower() not in library_set:
-                top = await lastfm.get_top_tracks(name, limit=2)
-                for t in top:
-                    entry = {"artist": name, "title": t.get("name", "")}
-                    if (name.lower(), entry["title"].lower()) not in rejected_set:
-                        candidates.append(entry)
+    for name, top in zip(capped, top_lists):
+        for t in top:
+            entry = {"artist": name, "title": t.get("name", "")}
+            if entry["title"] and (name.lower(), entry["title"].lower()) not in rejected_set:
+                candidates.append(entry)
 
     return _dedup(candidates)
 

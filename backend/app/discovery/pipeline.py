@@ -91,8 +91,15 @@ async def generate_for_profile(profile_id: str) -> None:
             if existing_genre:
                 shared_genre_songs = existing_genre.songs or []
 
-    p1 = await close_match.generate(profile, profile_songs, library_artists, rejected, llm) if "close" in needed_slots else []
-    p2 = await broader_taste.generate(profile, profile_songs, library_artists, rejected, llm) if "broader" in needed_slots else []
+    # Close + broader share one last.fm/ListenBrainz candidate fetch (DSC-4) —
+    # the pool is identical, so fetch once when either slot is needed.
+    shared_candidates = None
+    if "close" in needed_slots or "broader" in needed_slots:
+        seed_artists = close_match._sample_artists(profile_songs, library_artists, n=10)
+        shared_candidates = await close_match._fetch_candidates(seed_artists, library_artists, rejected)
+
+    p1 = await close_match.generate(profile, profile_songs, library_artists, rejected, llm, candidates=shared_candidates) if "close" in needed_slots else []
+    p2 = await broader_taste.generate(profile, profile_songs, library_artists, rejected, llm, candidates=shared_candidates) if "broader" in needed_slots else []
     if shared_genre_songs is not None:
         genre_name = next((s["_genre"] for s in shared_genre_songs if s.get("_genre")), None)
         p3_result = {"genre": genre_name, "tracks": [s for s in shared_genre_songs if not s.get("_genre")]}

@@ -15,10 +15,16 @@ async def generate(
     library_artists: list[str],
     rejected: list[dict],
     llm: LLMProvider,
+    candidates: list[dict] | None = None,
 ) -> list[dict]:
-    """Return up to 9 tracks for Playlist 2 (broader taste, slightly adventurous)."""
-    seed_artists = _sample_artists(profile_songs, library_artists, n=10)
-    candidates = await _fetch_candidates(seed_artists, library_artists, rejected)
+    """Return up to 9 tracks for Playlist 2 (broader taste, slightly adventurous).
+
+    `candidates` may be passed in by the pipeline to share one fetch with
+    close_match (DSC-4).
+    """
+    if candidates is None:
+        seed_artists = _sample_artists(profile_songs, library_artists, n=10)
+        candidates = await _fetch_candidates(seed_artists, library_artists, rejected)
 
     rejected_str = ", ".join(f"{r['artist']} - {r['title']}" for r in rejected[:50])
 
