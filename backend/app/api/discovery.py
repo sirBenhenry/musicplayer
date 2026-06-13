@@ -232,6 +232,28 @@ async def _enrich_songs(db: AsyncSession, songs: list[dict], playlist_id=None) -
         except Exception as e:
             log.warning("_enrich_songs: flag load failed: %s", e)
 
+    # Batch-resolve entries already stamped with their Song UUID (the staging
+    # flow writes "id" back into the playlist JSONB). One IN query instead of
+    # the 1-4 query cascade per song — this is the home screen's critical path.
+    stamped_ids: set[str] = set()
+    for song in songs:
+        if song.get("_genre") or song.get("_artist_of_day"):
+            continue
+        sid = song.get("id")
+        if sid:
+            stamped_ids.add(str(sid))
+    stamped_map: dict[str, tuple] = {}
+    if stamped_ids:
+        try:
+            id_uuids = [_uuid.UUID(s) for s in stamped_ids]
+            batch = await db.execute(
+                select(Song.id, Song.navidrome_id, Song.duration_sec)
+                .where(Song.id.in_(id_uuids))
+            )
+            stamped_map = {str(r.id): (r.navidrome_id, r.duration_sec) for r in batch.all()}
+        except Exception as e:
+            log.warning("_enrich_songs: batch id resolve failed: %s", e)
+
     enriched = []
     for song in songs:
         if song.get("_genre") or song.get("_artist_of_day"):
@@ -241,6 +263,26 @@ async def _enrich_songs(db: AsyncSession, songs: list[dict], playlist_id=None) -
         title = (song.get("title") or "").strip()
 
         row = None
+
+        # 0. Stamped id — resolved in the batch above, skip the cascade.
+        sid = song.get("id")
+        if sid and str(sid) in stamped_map:
+            nav_id, dur = stamped_map[str(sid)]
+            song_id_str = str(sid)
+            if song_id_str in keep_ids:
+                flag = "keep"
+            elif song_id_str in delete_ids:
+                flag = "delete"
+            else:
+                flag = None
+            enriched.append({
+                **song,
+                "navidrome_id": nav_id,
+                "duration_sec": dur,
+                "id": song_id_str,
+                "flag": flag,
+            })
+            continue
 
         # 1. Exact title + artist
         result = await db.execute(
