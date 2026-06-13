@@ -13,7 +13,7 @@ import logging
 import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from ..core.database import AsyncSessionLocal
 from ..models.discovery import DailyPlaylist
 from ..models.events import DownloadJob, UserNotification
@@ -285,22 +285,25 @@ async def _try_llm_alternative(db, pl, entry: dict, artist: str, title: str) -> 
 
 
 async def _count_llm_attempts(db, artist: str, title: str, playlist_id: str) -> int:
-    """Count how many LLM alternatives have been tried for this original song."""
+    """Count how many LLM alternatives have been tried for this original song.
+
+    One JSONB containment query instead of loading every DownloadJob (with its
+    JSONB pipeline_log) into Python — this ran per unresolvable song at 06:00.
+    """
     target = f"{artist} - {title}".lower()
     result = await db.execute(
-        select(DownloadJob).where(
-            DownloadJob.pipeline_log.isnot(None),
-        )
+        text("""
+            SELECT count(*)
+            FROM download_jobs,
+                 jsonb_array_elements(pipeline_log) AS e
+            WHERE jsonb_typeof(pipeline_log) = 'array'
+              AND e->>'step' = 'llm_alternative'
+              AND lower(e->'data'->>'llm_alt_for') = :target
+              AND e->'data'->>'playlist_id' = :pl
+        """),
+        {"target": target, "pl": playlist_id},
     )
-    count = 0
-    for job in result.scalars().all():
-        for entry in (job.pipeline_log or []):
-            data = entry.get("data") or {}
-            if (entry.get("step") == "llm_alternative"
-                    and data.get("llm_alt_for", "").lower() == target
-                    and data.get("playlist_id") == playlist_id):
-                count += 1
-    return count
+    return result.scalar_one() or 0
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
