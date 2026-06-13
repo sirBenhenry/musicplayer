@@ -4,6 +4,15 @@ version: "3.8"
 # Depends on aniapp stack for: qBittorrent (port 8080) and Prowlarr (port 9696)
 # Deploy order: musicapp first (creates musicapp_music_data volume), then update aniapp.
 
+# Log rotation (OPS-4): cap json-file logs so they don't grow unbounded on the
+# 38GB root disk. Takes effect only when containers are RECREATED — apply as
+# part of the NAS migration; do NOT `docker compose up` before then.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
 services:
 
   navidrome:
@@ -23,6 +32,7 @@ services:
     ports:
       - "4533:4533"
     restart: unless-stopped
+    logging: *default-logging
 
   lidarr:
     image: lscr.io/linuxserver/lidarr:latest
@@ -37,6 +47,7 @@ services:
     ports:
       - "8686:8686"
     restart: unless-stopped
+    logging: *default-logging
     # After first run, configure in Lidarr UI:
     #   Settings → Media Management → Root folder: /data/music/media/music
     #   Settings → Download Clients → qBittorrent at http://10.1.8.4:8080
@@ -53,6 +64,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U musicapp -d musicapp"]
       interval: 10s
@@ -76,6 +88,7 @@ services:
       - music_data:/data/music
       - slskd_config:/app
     restart: unless-stopped
+    logging: *default-logging
 
   music-backend:
     image: music-backend:latest
@@ -125,6 +138,7 @@ services:
       lidarr:
         condition: service_started
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   # NFS volume — shared with aniapp qBittorrent (external reference there)
