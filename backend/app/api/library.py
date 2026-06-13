@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 log = logging.getLogger(__name__)
@@ -33,11 +33,17 @@ stream_router = APIRouter(tags=["stream"])
 
 
 @stream_router.get("/stream/{navidrome_id}")
-async def stream_audio(navidrome_id: str):
-    from fastapi import HTTPException
+async def stream_audio(navidrome_id: str, request: Request):
     url = navidrome.stream_url(navidrome_id)
+    # Forward the client's Range header so ExoPlayer (RNTP) can seek into
+    # unbuffered regions without forcing a full re-download from byte 0.
+    upstream_headers = {}
+    if rng := request.headers.get("range"):
+        upstream_headers["Range"] = rng
     client = httpx.AsyncClient(timeout=None)
-    r = await client.send(client.build_request("GET", url), stream=True)
+    r = await client.send(
+        client.build_request("GET", url, headers=upstream_headers), stream=True
+    )
     content_type = r.headers.get("content-type", "")
 
     # Navidrome returns application/json for invalid IDs (Subsonic error envelope).
@@ -55,7 +61,15 @@ async def stream_audio(navidrome_id: str):
             await r.aclose()
             await client.aclose()
 
-    return StreamingResponse(_gen(), media_type=content_type)
+    # Pass through 206 + range metadata so the player gets a real partial response.
+    resp_headers = {
+        k: v for k, v in r.headers.items()
+        if k.lower() in ("content-range", "accept-ranges", "content-length")
+    }
+    return StreamingResponse(
+        _gen(), status_code=r.status_code,
+        media_type=content_type, headers=resp_headers,
+    )
 
 
 _NAVIDROME_DEFAULT_COVER_SIZE = 69228  # blue vinyl placeholder — same hash for all missing covers
