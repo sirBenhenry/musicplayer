@@ -55,6 +55,10 @@ def start_scheduler(settings) -> None:
     from ..jobs.qbit_watchdog import enforce_no_upload
     scheduler.add_job(enforce_no_upload, "interval", hours=1, id="qbit_watchdog")
 
+    # Temp-file janitor: sweep leaked /tmp audio files hourly (disk-full guard)
+    from ..jobs.janitor import cleanup_tmp
+    scheduler.add_job(cleanup_tmp, "interval", hours=1, id="tmp_janitor")
+
     scheduler.start()
 
 
