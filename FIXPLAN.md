@@ -247,7 +247,7 @@ await db.execute(sa_delete(DailyPlaylist).where(DailyPlaylist.profile_id == prof
 then delete + commit, and call `bump_library_stamp()` (import from `..api.library`) so mobile refreshes.
 **Verify:** create throwaway profile, assign one song, delete profile → 204, song visible in All Music.
 
-### BE-7 — `/queue/append` and `/queue/next` crash on lazy artist load (MEDIUM — dead endpoints)
+### BE-7 — `/queue/append` and `/queue/next` crash on lazy artist load (MEDIUM — dead endpoints) ✅ (2026-06-13, deployed)
 **File:** `backend/app/api/queue.py` `_song_dict` (lines 584–599) used by `append`/`insert_next`.
 **Problem:** `song.artist` triggers a lazy load on an async session → `MissingGreenlet` → 500.
 Mobile doesn’t use these endpoints (it manages the queue locally in RNTP), so the in-memory `_queue`,
@@ -257,7 +257,7 @@ endpoints, `AppendBody/NextBody/ReorderBody`, and `_song_dict`. Keep only `/queu
 `/queue/auto-radio-batch`. Remove `getQueue`/`appendQueue` from `mobile/lib/api.ts` (unused).
 **Verify:** app builds; auto-radio still works.
 
-### BE-8 — On-demand single-song analysis poisons the song (MEDIUM)
+### BE-8 — On-demand single-song analysis poisons the song (MEDIUM) ✅ (2026-06-13, deployed)
 **File:** `backend/app/api/queue.py` `_analyse_one` (lines 535–579).
 **Problem:** it sets `analysed_at` after extracting only `feature_vector` — BPM/key/mood/vibe columns
 stay NULL, and the scheduled `analyse_pending_songs` (which fills everything) skips songs with
@@ -322,7 +322,7 @@ One unfindable song → dozens of identical notifications. Live count: 229.
    dismissed=true WHERE type='exhausted'`) to clear the current 229.
 **Verify:** notification count stays sane after a nightly cycle with unfindable songs.
 
-### BE-11 — Spotify import always names the playlist “Imported Playlist” (MEDIUM)
+### BE-11 — Spotify import always names the playlist “Imported Playlist” (MEDIUM) ✅ (2026-06-13, deployed)
 **File:** `backend/app/services/spotify_import.py` lines 57–63.
 **Problem:** `spotdl save` writes a JSON **list** of songs; each song carries `list_name`. The code only
 reads `name`/`list_name` when the top-level is a dict, which it never is → `playlist_name` is None.
@@ -370,7 +370,7 @@ session raises `MissingGreenlet`, which the surrounding `try/except` silently sw
 `download_poller.py` is NOT affected (it doesn’t touch `.album`) — leave it.
 **Verify:** download a song without embedded art; log shows `post-download hook: embedded cover…`.
 
-### BE-14 — `_count_llm_attempts` scans the entire download_jobs table in Python (MEDIUM perf)
+### BE-14 — `_count_llm_attempts` scans the entire download_jobs table in Python (MEDIUM perf) ✅ (2026-06-13, deployed)
 **File:** `backend/app/jobs/playlist_health.py` lines 267–283.
 **Problem:** loads every DownloadJob row (with JSONB) into memory, every 06:00 run, per unresolvable
 song. With ~2000 jobs this is heavy and grows forever.
@@ -428,7 +428,7 @@ status requests pinned the loop hard enough that `/health` timed out for minutes
 **Verify:** open Settings on the phone, hammer `/health` in a loop — zero timeouts; first
 system-status response may take a while (thread), subsequent ones instant.
 
-### BE-15 — Library search only matches title (LOW)
+### BE-15 — Library search only matches title (LOW) ✅ (2026-06-13, deployed)
 **File:** `backend/app/api/library.py` line 142–143.
 **Problem:** `?search=` matches only `Song.title`. Mobile filters client-side anyway, so this affects
 only API consumers (MCP).
@@ -448,7 +448,7 @@ carry their Song UUID; resolve those with ONE `WHERE id IN (...)` batch query an
 fallback cascade for them. Keep the cascade only for unstamped entries.
 **Verify:** home screen loads noticeably faster; flags still appear.
 
-### BE-18 — archive.org download buffers whole file in RAM (LOW)
+### BE-18 — archive.org download buffers whole file in RAM (LOW) ✅ (2026-06-13, deployed)
 **File:** `backend/app/services/sources/archive_org_src.py` lines 86–91.
 **Fix:** stream to disk:
 ```python
@@ -459,7 +459,7 @@ async with client.stream("GET", url) as r:
             fh.write(chunk)
 ```
 
-### BE-19 — YouTube candidates get unearned cover-art points (LOW)
+### BE-19 — YouTube candidates get unearned cover-art points (LOW) ✅ (2026-06-13, deployed)
 **File:** `backend/app/services/sources/youtube_src.py` line 81 (`has_cover_art=True`).
 **Problem:** yt-dlp does not embed the thumbnail with the current options, so +5 cover points are
 fake and the post-download has_cover flag is wrong.
@@ -467,7 +467,7 @@ fake and the post-download has_cover flag is wrong.
 postprocessors plus `"writethumbnail": True` in `ydl_opts`. Prefer (b) — better outcome. Note
 `EmbedThumbnail` requires ffmpeg (present in image) and works for m4a/mp3.
 
-### BE-20 — Dead code & consistency sweep (LOW)
+### BE-20 — Dead code & consistency sweep (LOW) ✅ (2026-06-13, deployed)
 - `backend/app/api/queue.py`: `_query_random` (lines 456–488) unused → delete. `mood_compat` computed
   (line 238) but unused in the score → delete the computation and `_mood_compat`/`_seed_mood_vec` if
   then unused.
