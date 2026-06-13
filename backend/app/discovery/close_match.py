@@ -51,6 +51,7 @@ async def generate(
 
     try:
         raw = await llm.complete([
+            {"role": "system", "content": SYSTEM},
             {"role": "user", "content": prompt},
         ])
         return _parse(raw)

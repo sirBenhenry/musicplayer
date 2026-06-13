@@ -58,7 +58,8 @@ _MAX_DOWNLOAD_ATTEMPTS = 5    # try top-N candidates before giving up
 _SOURCE_TIMEOUTS: dict[str, float] = {
     "qobuz":    30,
     "prowlarr": 120,   # indexer searches are inherently slow; worth waiting for FLAC
-    "soulseek": 100,   # slskd needs time to collect peer responses
+    "soulseek": 600,   # slskd manages its own 90s polling + Semaphore(4) queue;
+                       # a tight cap would cancel searches still waiting for a slot
     "spotdl":   60,
     "youtube":  30,
     "archive":  30,
@@ -584,21 +585,17 @@ async def _run_pipeline_inner(job_id: uuid.UUID) -> None:
     source_log: dict[str, str] = {}
 
     async def _search_source(src) -> list[Candidate]:
+        # Per-source cap lives in _SOURCE_TIMEOUTS (soulseek=600 reflects its own
+        # internal 90s polling + Semaphore(4) queue — a tight cap would cancel
+        # searches still waiting for a slot).
         timeout = _SOURCE_TIMEOUTS.get(src.NAME, _SOURCE_TIMEOUT_DEFAULT)
         try:
-            # Soulseek manages its own search timing internally (90s polling loop +
-            # Semaphore(4) queue). Wrapping in wait_for cancels searches still waiting
-            # for a queue slot. Apply a generous safety cap instead of the tight timeout.
-            if src.NAME == "soulseek":
-                results = await asyncio.wait_for(src.search(ctx), timeout=600)
-            else:
-                results = await asyncio.wait_for(src.search(ctx), timeout=timeout)
+            results = await asyncio.wait_for(src.search(ctx), timeout=timeout)
             source_log[src.NAME] = f"{len(results)} candidates"
             return results
         except asyncio.TimeoutError:
-            actual_timeout = 600 if src.NAME == "soulseek" else timeout
-            source_log[src.NAME] = f"timeout after {actual_timeout}s"
-            log.warning("pipeline: %s timed out (%ds) for %s - %s", src.NAME, actual_timeout, ctx.artist, ctx.title)
+            source_log[src.NAME] = f"timeout after {timeout}s"
+            log.warning("pipeline: %s timed out (%ds) for %s - %s", src.NAME, timeout, ctx.artist, ctx.title)
             return []
         except Exception as e:
             source_log[src.NAME] = f"error: {e}"

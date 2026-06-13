@@ -29,7 +29,8 @@ async def generate(
 
     try:
         raw = await llm.complete(
-            [{"role": "user", "content": prompt}],
+            [{"role": "system", "content": SYSTEM},
+             {"role": "user", "content": prompt}],
         )
         return _parse(raw)
     except Exception as e:

@@ -151,7 +151,6 @@ async def _pick_next(
 
     seed_bpm = seed.bpm
     seed_mode = seed.key_mode
-    seed_moods = _seed_mood_vec(seed)
 
     for c in candidates:
         # Cosine distance 0-2 → similarity 0-1 (embeddings are L2-normalised)
@@ -162,9 +161,6 @@ async def _pick_next(
 
         # Mode match: 1.0 same, 0.5 null, 0.0 different
         mode_compat = _mode_compat(seed_mode, c.get("key_mode"))
-
-        # Mood cosine similarity (null-safe)
-        mood_compat = _mood_compat(seed_moods, c)
 
         # Vibe compat: beat_strength + spectral_centroid + dyn_complexity
         vibe_compat = _vibe_compat(seed, c)
@@ -219,29 +215,6 @@ def _mode_compat(seed_mode: str | None, cand_mode: str | None) -> float:
     if seed_mode is None or cand_mode is None:
         return 0.5
     return 1.0 if seed_mode == cand_mode else 0.0
-
-
-def _seed_mood_vec(seed) -> list[float] | None:
-    moods = [seed.mood_happy, seed.mood_sad, seed.mood_aggressive,
-             seed.mood_relaxed, seed.mood_party]
-    if all(m is None for m in moods):
-        return None
-    return [m or 0.0 for m in moods]
-
-
-def _mood_compat(seed_moods: list[float] | None, c: dict) -> float:
-    if seed_moods is None:
-        return 0.5
-    cand = [c.get("mood_happy"), c.get("mood_sad"), c.get("mood_aggressive"),
-            c.get("mood_relaxed"), c.get("mood_party")]
-    if all(m is None for m in cand):
-        return 0.5
-    import math as _math
-    c_vec = [m or 0.0 for m in cand]
-    dot = sum(a * b for a, b in zip(seed_moods, c_vec))
-    norm_s = _math.sqrt(sum(x * x for x in seed_moods)) or 1e-8
-    norm_c = _math.sqrt(sum(x * x for x in c_vec)) or 1e-8
-    return max(0.0, dot / (norm_s * norm_c))
 
 
 def _vibe_compat(seed, c: dict) -> float:
@@ -377,41 +350,6 @@ async def _query_by_vector(
 
     base_q += f" ORDER BY _dist LIMIT {limit}"
 
-    result = await db.execute(text(base_q), params)
-    rows = result.fetchall()
-    return [_row_to_candidate(row) for row in rows]
-
-
-async def _query_random(
-    db: AsyncSession,
-    profile_id: str | None,
-    excluded_ids: set[str],
-    limit: int,
-) -> list[dict]:
-    import uuid as _uuid
-
-    excl_list = list(excluded_ids) if excluded_ids else ["00000000-0000-0000-0000-000000000000"]
-    base_q = """
-        SELECT
-            s.id::text, s.navidrome_id, s.title,
-            s.artist_id::text, s.album_id::text, s.duration_sec,
-            s.display_artist, a.name AS artist_name,
-            0.5 AS _dist
-        FROM songs s
-        LEFT JOIN artists a ON a.id = s.artist_id
-        WHERE s.id::text != ALL(:excluded)
-    """
-    params: dict[str, Any] = {"excluded": excl_list}
-
-    if profile_id:
-        try:
-            pid = _uuid.UUID(profile_id)
-            base_q += " AND s.profile_id = :pid"
-            params["pid"] = pid
-        except ValueError:
-            pass
-
-    base_q += f" ORDER BY RANDOM() LIMIT {limit}"
     result = await db.execute(text(base_q), params)
     rows = result.fetchall()
     return [_row_to_candidate(row) for row in rows]
