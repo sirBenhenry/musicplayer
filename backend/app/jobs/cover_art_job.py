@@ -9,6 +9,7 @@ Note: Song.file_path is Navidrome's virtual tag-based path, NOT a real
 filesystem path. Real paths come from DownloadJob.file_path (absolute).
 We match Song → DownloadJob by lower(artist)+lower(title).
 """
+import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -22,11 +23,22 @@ _RETRY_INTERVAL_H = 4
 _MAX_FAST_RETRIES = 5
 
 
-async def _resolve_file_path(song, db) -> tuple[str | None, str | None, str | None]:
+def _build_basename_index(music_dir: str) -> dict[str, str]:
+    """Walk MUSIC_DIR once → {basename: fullpath}. Built per job run so each
+    song is an O(1) lookup instead of a full NFS tree walk (SRC-4)."""
+    index: dict[str, str] = {}
+    for root, _dirs, files in os.walk(music_dir):
+        for fn in files:
+            # First occurrence wins; basenames are effectively unique here.
+            index.setdefault(fn, os.path.join(root, fn))
+    return index
+
+
+async def _resolve_file_path(song, db, index: dict[str, str] | None = None) -> tuple[str | None, str | None, str | None]:
     """
     Return (abs_path, mb_release_id, mb_recording_id) for a song.
     1. Look up DownloadJob by lower(artist+title) — use file_path if it exists.
-    2. If file_path missing from disk, try find-by-basename under MUSIC_DIR.
+    2. If file_path missing from disk, look up the basename in the prebuilt index.
     """
     from ..models.events import DownloadJob
     from ..core.config import get_settings
@@ -60,15 +72,21 @@ async def _resolve_file_path(song, db) -> tuple[str | None, str | None, str | No
     if job_path and os.path.exists(job_path):
         return job_path, mb_release_id, mb_recording_id
 
-    # Fallback: search filesystem by basename of job_path (file moved to torrent subfolder)
+    # Fallback: look up the basename in the prebuilt index (file moved to a
+    # torrent subfolder). Falls back to a single walk only if no index passed.
     if job_path:
         basename = os.path.basename(job_path)
-        music_dir = get_settings().MUSIC_DIR
-        for root, _dirs, files in os.walk(music_dir):
-            if basename in files:
-                found = os.path.join(root, basename)
-                log.debug("cover_art_job: found '%s' at %s via walk", basename, found)
+        if index is not None:
+            found = index.get(basename)
+            if found:
+                log.debug("cover_art_job: found '%s' at %s via index", basename, found)
                 return found, mb_release_id, mb_recording_id
+        else:
+            music_dir = get_settings().MUSIC_DIR
+            for root, _dirs, files in os.walk(music_dir):
+                if basename in files:
+                    found = os.path.join(root, basename)
+                    return found, mb_release_id, mb_recording_id
 
     # Final fallback: use Song.file_path (Navidrome-relative) + MUSIC_DIR
     if song.file_path:
@@ -98,7 +116,7 @@ async def _navidrome_has_cover(navidrome_id: str) -> bool:
         return False
 
 
-async def _process_songs(songs: list, db) -> int:
+async def _process_songs(songs: list, db, index: dict[str, str] | None = None) -> int:
     """Attempt cover embed for each song. Returns count successfully embedded."""
     from ..services.download_pipeline import _fetch_and_embed_cover
 
@@ -108,7 +126,7 @@ async def _process_songs(songs: list, db) -> int:
         artist = song.display_artist or (song.artist.name if song.artist else "") or ""
         album = song.album.title if song.album else None
 
-        abs_path, mb_release_id, mb_recording_id = await _resolve_file_path(song, db)
+        abs_path, mb_release_id, mb_recording_id = await _resolve_file_path(song, db, index)
 
         if not abs_path:
             # File not found on disk — check if Navidrome already has a cover
@@ -194,7 +212,9 @@ async def scan_missing_covers() -> None:
         if not songs:
             return
 
-        n = await _process_songs(songs, db)
+        from ..core.config import get_settings
+        index = await asyncio.to_thread(_build_basename_index, get_settings().MUSIC_DIR)
+        n = await _process_songs(songs, db, index)
         await db.commit()
         log.info("cover_art_job: daily scan done — embedded %d / %d", n, len(songs))
 
@@ -225,7 +245,9 @@ async def retry_missing_covers() -> None:
             return
 
         log.info("cover_art_job: fast-retry queue — %d songs", len(songs))
-        n = await _process_songs(songs, db)
+        from ..core.config import get_settings
+        index = await asyncio.to_thread(_build_basename_index, get_settings().MUSIC_DIR)
+        n = await _process_songs(songs, db, index)
         await db.commit()
         log.info("cover_art_job: fast-retry done — embedded %d / %d", n, len(songs))
 
