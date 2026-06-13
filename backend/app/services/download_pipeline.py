@@ -922,6 +922,7 @@ async def _run_upgrade_pipeline(job_id: uuid.UUID) -> None:
         if not job or job.status != "completed":
             return
         new_score = job.confidence_score or 0.0
+        new_path = job.file_path
         if new_score > old_score + 5:
             # Delete old file
             if old_path and os.path.exists(old_path):
@@ -933,6 +934,19 @@ async def _run_upgrade_pipeline(job_id: uuid.UUID) -> None:
                     # Continue — new file is already downloaded
         else:
             log.info("upgrade: new score %.1f not significantly better than %.1f — keeping original", new_score, old_score)
+            # The re-run downloaded a new file and pointed job.file_path at it.
+            # Since we're keeping the original, that new file is an orphan on
+            # disk — delete it and restore the original path/score (SRC-5).
+            if new_path and new_path != old_path and os.path.exists(new_path):
+                try:
+                    os.remove(new_path)
+                    log.info("upgrade: discarded not-better new file %s", new_path)
+                except OSError as e:
+                    log.error("upgrade: could not delete new orphan %s: %s", new_path, e)
+            job.file_path = old_path
+            job.confidence_score = old_score
+            job.review_status = "bad_quality"  # keep flagged for a future better source
+            await db.commit()
 
 
 async def _handle_failure(job_id: uuid.UUID, error_msg: str, pipeline_log: list) -> None:
