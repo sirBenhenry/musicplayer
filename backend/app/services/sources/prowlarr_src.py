@@ -71,15 +71,19 @@ async def search(job) -> list[Candidate]:
                 continue
 
             candidates.append(Candidate(
+                # Score against the REAL torrent name, not the query echo — using
+                # title=job.title made identity scoring compare the query to
+                # itself and pass even wrong torrents (SRC-6). Fuzzy matching
+                # handles noisy names like "Artist - Title [FLAC] 2019".
                 source=NAME,
-                title=title,
+                title=result_title or title,
                 artist=artist,
                 album=None,
                 format=fmt,
                 bitrate=bitrate,
                 file_size=size,
                 has_cover_art=False,
-                metadata={},
+                metadata={"query_title": title},
                 download_ref={"url": url, "title": result_title},
             ))
 
