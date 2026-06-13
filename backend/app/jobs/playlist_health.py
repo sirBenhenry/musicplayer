@@ -66,13 +66,33 @@ async def retry_playlist_songs() -> None:
                     except Exception as e:
                         log.warning("playlist_health: failed to create job for '%s - %s': %s", artist, title, e)
                 elif job.status in ("failed", "exhausted"):
+                    if job.status == "exhausted":
+                        # Cap resurrections: an unfindable song otherwise loops
+                        # exhausted→failed→exhausted every 30 min forever, and
+                        # (pre-dedup) spawned a new notification each time.
+                        # Count prior reset markers in the log; give up after 2
+                        # and leave it to the 06:00 LLM-alternative/cleanup path.
+                        prior = job.pipeline_log or []
+                        markers = [e for e in prior if isinstance(e, dict)
+                                   and e.get("step") == "playlist_health_reset"]
+                        if len(markers) >= 2:
+                            continue
+                        # Preserve markers across the reset + append a new one,
+                        # and give the song a genuine fresh attempt.
+                        new_log = markers + [{
+                            "step": "playlist_health_reset",
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        }]
+                        job.retry_count = 0
+                    else:
+                        new_log = []
                     job.status = "failed"
                     job.next_retry_at = datetime.now(timezone.utc) - timedelta(minutes=1)
                     job.sources_tried = []
                     job.candidates = []
-                    job.pipeline_log = []
+                    job.pipeline_log = new_log
                     reset_job_ids.append(job.id)
-                    log.info("playlist_health: reset %s job for '%s - %s'", job.status, artist, title)
+                    log.info("playlist_health: reset job for '%s - %s'", artist, title)
 
         await db.commit()
 

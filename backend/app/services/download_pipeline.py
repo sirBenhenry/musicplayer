@@ -953,16 +953,30 @@ async def _handle_failure(job_id: uuid.UUID, error_msg: str, pipeline_log: list)
             job.next_retry_at = None
             log.warning("pipeline: %s - %s exhausted after %d retries",
                         job.artist, job.title, job.retry_count)
-            # Notify user of permanent failure
+            # Notify user of permanent failure — but only once per song.
+            # playlist_health resets exhausted jobs back to failed every 30 min;
+            # without this dedup each re-exhaustion spawned a new notification
+            # (live count hit 229 duplicates). Match an existing undismissed
+            # "exhausted" notice for the same title+artist (the job_id changes
+            # across retries, so we match on message text).
             try:
-                db.add(UserNotification(
-                    type="exhausted",
-                    download_job_id=job_id,
-                    message=(
-                        f"Could not find \"{job.title}\" by {job.artist} "
-                        f"after {job.retry_count} retries across all sources."
-                    ),
-                ))
+                needle = f'"{job.title}" by {job.artist}'
+                existing = await db.execute(
+                    select(UserNotification.id).where(
+                        UserNotification.type == "exhausted",
+                        UserNotification.dismissed == False,  # noqa: E712
+                        UserNotification.message.contains(needle),
+                    ).limit(1)
+                )
+                if existing.scalars().first() is None:
+                    db.add(UserNotification(
+                        type="exhausted",
+                        download_job_id=job_id,
+                        message=(
+                            f"Could not find \"{job.title}\" by {job.artist} "
+                            f"after {job.retry_count} retries across all sources."
+                        ),
+                    ))
             except Exception as e:
                 log.exception("pipeline: exhausted notification failed: %s", e)
         else:
