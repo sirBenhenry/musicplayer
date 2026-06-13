@@ -3,7 +3,7 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.auth import require_auth
@@ -39,18 +39,21 @@ class ProfileOut(BaseModel):
 async def list_profiles(db: Annotated[AsyncSession, Depends(get_db)]):
     result = await db.execute(select(Profile))
     profiles = result.scalars().all()
-    out = []
-    for p in profiles:
-        count_res = await db.execute(
-            select(Song).where(Song.profile_id == p.id)
-        )
-        count = len(count_res.scalars().all())
-        out.append(ProfileOut(
+    # One grouped count instead of loading every Song row (incl. 5KB vectors)
+    # per profile — this endpoint is hit at app startup.
+    counts_res = await db.execute(
+        select(Song.profile_id, func.count(Song.id)).group_by(Song.profile_id)
+    )
+    count_map = {pid: n for pid, n in counts_res.all()}
+    return [
+        ProfileOut(
             id=p.id, name=p.name, description=p.description,
             glyph=p.glyph, hue=p.hue, is_catchall=p.is_catchall,
-            daily_auto_generate=p.daily_auto_generate, song_count=count,
-        ))
-    return out
+            daily_auto_generate=p.daily_auto_generate,
+            song_count=count_map.get(p.id, 0),
+        )
+        for p in profiles
+    ]
 
 
 @router.post("", response_model=ProfileOut, status_code=201)
@@ -88,28 +91,22 @@ async def delete_profile(profile_id: uuid.UUID, db: Annotated[AsyncSession, Depe
         raise HTTPException(404, "Profile not found")
     if p.is_catchall:
         raise HTTPException(400, "Cannot delete the catchall profile")
+    # FKs on songs/daily_playlists/download_jobs have no ON DELETE, so a profile
+    # with any of these would raise IntegrityError → 500. Unassign songs (the
+    # delete dialog promises "songs become unassigned"), null out job refs, and
+    # drop this profile's daily playlists before deleting it.
+    from ..models.discovery import DailyPlaylist
+    from ..models.events import DownloadJob
+    await db.execute(
+        update(Song).where(Song.profile_id == profile_id)
+        .values(profile_id=None, needs_profile_assignment=False)
+    )
+    await db.execute(
+        update(DownloadJob).where(DownloadJob.profile_id == profile_id)
+        .values(profile_id=None)
+    )
+    await db.execute(sa_delete(DailyPlaylist).where(DailyPlaylist.profile_id == profile_id))
     await db.delete(p)
     await db.commit()
-
-
-class AssignRequest(BaseModel):
-    profile_id: uuid.UUID
-
-
-@router.post("/../songs/{song_id}/assign", status_code=204, include_in_schema=False)
-async def _unused():
-    pass
-
-
-# Song assignment lives here but path is on /songs — mounted in main via library router
-# We expose it through a separate helper used by the library router
-async def assign_song_profile(song_id: uuid.UUID, profile_id: uuid.UUID, db: AsyncSession) -> None:
-    song = await db.get(Song, song_id)
-    if not song:
-        raise HTTPException(404, "Song not found")
-    profile = await db.get(Profile, profile_id)
-    if not profile:
-        raise HTTPException(404, "Profile not found")
-    song.profile_id = profile_id
-    song.needs_profile_assignment = False
-    await db.commit()
+    from ..api.library import bump_library_stamp
+    bump_library_stamp()
