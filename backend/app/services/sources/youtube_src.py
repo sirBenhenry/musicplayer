@@ -113,10 +113,16 @@ async def download(candidate: Candidate, dest_dir: str) -> tuple[bool, str | Non
     tmp_dir = tempfile.mkdtemp(dir=dest_dir, prefix=".yt_")
     out_template = os.path.join(tmp_dir, "%(title)s.%(ext)s")
 
+    # Embed the thumbnail as cover art (ffmpeg is in the image) so the +5
+    # cover-art score and the post-download has_cover flag are truthful.
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": out_template,
-        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "best"}],
+        "writethumbnail": True,
+        "postprocessors": [
+            {"key": "FFmpegExtractAudio", "preferredcodec": "best"},
+            {"key": "EmbedThumbnail"},
+        ],
         "quiet": True,
         "no_warnings": True,
     }
