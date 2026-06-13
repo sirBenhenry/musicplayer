@@ -1,4 +1,8 @@
-"""In-memory session queue + auto-radio next-song endpoint."""
+"""Auto-radio next-song endpoint (acoustic similarity + scoring).
+
+The playback queue itself lives client-side in RNTP; the old server-side
+in-memory queue endpoints were dead (and crashed on lazy artist load) — removed.
+"""
 import asyncio
 import logging
 import math
@@ -14,15 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.auth import require_auth
 from ..core.database import get_db
 from ..models.library import Song
-from ..models.events import SongEvent
-from ..services.navidrome import stream_url
 
 router = APIRouter(prefix="/queue", tags=["queue"])
 log = logging.getLogger(__name__)
-
-# Single-user in-memory queue
-_queue: list[dict] = []
-_current_index: int = 0
 
 # ── Tuning constants ──────────────────────────────────────────────────────────
 _SAME_ARTIST_PENALTY = 0.30  # score penalty for same artist
@@ -30,75 +28,6 @@ _RECENCY_HALF_LIFE_H = 4.0   # hours at which recency penalty = 0.5 * max
 _RECENCY_MAX_PENALTY = 0.55  # maximum recency penalty (for very recently played)
 _TEMPERATURE = 0.05           # softmax temperature — tight with 1280-dim cosine embeddings
 _SHORT_BAN_PENALTY = 10.0    # effectively infinite penalty for short-banned songs
-
-
-class AppendBody(BaseModel):
-    song_id: str
-
-
-class NextBody(BaseModel):
-    song_id: str
-
-
-class ReorderBody(BaseModel):
-    from_index: int
-    to_index: int
-
-
-@router.get("")
-async def get_queue(_: str = Depends(require_auth)):
-    return {"items": _queue, "current_index": _current_index}
-
-
-@router.post("/append")
-async def append(
-    body: AppendBody,
-    db: AsyncSession = Depends(get_db),
-    _: str = Depends(require_auth),
-):
-    song = await db.get(Song, body.song_id)
-    if not song:
-        raise HTTPException(404, "Song not found")
-    _queue.append(_song_dict(song))
-    return {"queue_length": len(_queue)}
-
-
-@router.post("/next")
-async def insert_next(
-    body: NextBody,
-    db: AsyncSession = Depends(get_db),
-    _: str = Depends(require_auth),
-):
-    global _current_index
-    song = await db.get(Song, body.song_id)
-    if not song:
-        raise HTTPException(404, "Song not found")
-    insert_at = _current_index + 1
-    _queue.insert(insert_at, _song_dict(song))
-    return {"inserted_at": insert_at}
-
-
-@router.delete("/{index}")
-async def remove_item(index: int, _: str = Depends(require_auth)):
-    global _current_index
-    if index < 0 or index >= len(_queue):
-        raise HTTPException(400, "Index out of range")
-    _queue.pop(index)
-    if index < _current_index:
-        _current_index = max(0, _current_index - 1)
-    return {"queue_length": len(_queue)}
-
-
-@router.put("/reorder")
-async def reorder(body: ReorderBody, _: str = Depends(require_auth)):
-    global _current_index
-    if body.from_index < 0 or body.from_index >= len(_queue):
-        raise HTTPException(400, "from_index out of range")
-    if body.to_index < 0 or body.to_index >= len(_queue):
-        raise HTTPException(400, "to_index out of range")
-    item = _queue.pop(body.from_index)
-    _queue.insert(body.to_index, item)
-    return {"queue_length": len(_queue)}
 
 
 # ── Auto-radio ────────────────────────────────────────────────────────────────
@@ -579,21 +508,3 @@ async def _analyse_one(song_id: str) -> None:
         log.warning("_analyse_one failed for %s: %s", song_id, e)
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _song_dict(song: Song) -> dict:
-    artist_name = ""
-    if hasattr(song, "artist") and song.artist:
-        artist_name = song.artist.name
-    elif song.display_artist:
-        artist_name = song.display_artist
-    return {
-        "id": str(song.id),
-        "navidrome_id": song.navidrome_id,
-        "title": song.title,
-        "artist": artist_name,
-        "artist_name": artist_name,
-        "artist_id": str(song.artist_id) if song.artist_id else None,
-        "album_id": str(song.album_id) if song.album_id else None,
-        "duration_sec": song.duration_sec,
-    }
