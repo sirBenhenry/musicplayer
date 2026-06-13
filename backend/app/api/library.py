@@ -154,7 +154,12 @@ async def list_songs(
     if unassigned:
         q = q.where(Song.needs_profile_assignment == True)  # noqa: E712
     if search:
-        q = q.where(Song.title.ilike(f"%{search}%"))
+        like = f"%{search}%"
+        q = q.where(or_(
+            Song.title.ilike(like),
+            Song.display_artist.ilike(like),
+            Song.title_romanized.ilike(like),
+        ))
     q = q.order_by(Song.title).offset((page - 1) * limit).limit(limit)
     result = await db.execute(q)
     songs = result.scalars().all()
