@@ -214,7 +214,13 @@ async def _process_close_broader(pl, listened_ids, skipped_ids, known_ids):
 # ── genre ────────────────────────────────────────────────────────────────────
 
 async def _process_genre(pl, listened_ids, skipped_ids, known_ids):
-    """Process songs, create genre_prompt notification, mark consumed."""
+    """Process songs, create genre_prompt notification, mark consumed.
+
+    DSC-7: once the 80% threshold trips, staged songs that were neither
+    listened-through nor skipped ARE deleted. This is BY DESIGN — the genre
+    playlist is a one-shot "done" experience and leftovers are discarded, not
+    retained. Do not "fix" this to keep them.
+    """
     from ..core.config import get_settings
 
     assigned = 0
@@ -270,7 +276,11 @@ async def _process_genre(pl, listened_ids, skipped_ids, known_ids):
 # ── artist ───────────────────────────────────────────────────────────────────
 
 async def _process_artist(pl, listened_ids, skipped_ids, known_ids):
-    """Process songs, determine follow/add action, create artist_prompt notification."""
+    """Process songs, determine follow/add action, create artist_prompt notification.
+
+    DSC-7: like the genre slot, never-played staged songs are deleted once the
+    threshold trips. By design — do not change.
+    """
     from ..core.config import get_settings
     from sqlalchemy.orm import selectinload
 
