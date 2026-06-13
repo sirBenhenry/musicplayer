@@ -467,8 +467,7 @@ async def _analyse_one(song_id: str) -> None:
         import uuid as _uuid
         from ..core.database import AsyncSessionLocal
         from ..services.essentia_svc import extract_features
-        from ..services.navidrome import stream_url as _stream_url
-        import httpx, tempfile, os
+        import httpx, tempfile
         from datetime import datetime, timezone
         from pathlib import Path
 
@@ -496,12 +495,20 @@ async def _analyse_one(song_id: str) -> None:
                     tmp = f.name
 
             try:
-                vec = await extract_features(tmp)
-                if vec:
-                    song.feature_vector = vec
-                song.analysed_at = datetime.now(timezone.utc)
-                await db.commit()
-                log.info("on-demand analysis done for %s", song_id)
+                features = await extract_features(tmp)
+                if features:
+                    # Apply ALL columns (bpm/key/mood/vibe), not just the vector —
+                    # otherwise analysed_at gets set with those NULL and the
+                    # scheduled full pass skips the song forever, leaving auto-
+                    # radio scoring without BPM/key/vibe.
+                    from ..services.essentia_svc import _apply_features_to_song
+                    _apply_features_to_song(song, features)
+                    song.analysed_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    log.info("on-demand analysis done for %s", song_id)
+                else:
+                    # Leave analysed_at NULL so the scheduled job retries fully.
+                    log.info("on-demand analysis: no features for %s, leaving unanalysed", song_id)
             finally:
                 Path(tmp).unlink(missing_ok=True)
     except Exception as e:
