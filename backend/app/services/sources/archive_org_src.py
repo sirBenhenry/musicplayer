@@ -83,12 +83,14 @@ async def download(candidate: Candidate, dest_dir: str) -> tuple[bool, str | Non
         raise RuntimeError("archive.org candidate missing identifier/filename")
 
     url = f"{_BASE}/download/{identifier}/{fname}"
+    dest = os.path.join(dest_dir, fname)
     async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        dest = os.path.join(dest_dir, fname)
-        with open(dest, "wb") as fh:
-            fh.write(r.content)
+        # Stream to disk — don't buffer the whole audio file in RAM.
+        async with client.stream("GET", url) as r:
+            r.raise_for_status()
+            with open(dest, "wb") as fh:
+                async for chunk in r.aiter_bytes(65536):
+                    fh.write(chunk)
 
     log.info("archive.org: downloaded %s - %s from %s", candidate.artist, candidate.title, identifier)
     return True, dest
