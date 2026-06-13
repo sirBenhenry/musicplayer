@@ -1041,15 +1041,24 @@ async def _post_download_hook(job_id: uuid.UUID) -> None:
             # Songs.file_path is Navidrome-relative; DownloadJob.file_path is absolute.
             # Navidrome uses tag-based virtual paths (Artist/Album/file) which differ from
             # the flat filename we saved — so we need multi-fallback lookup.
+            # Eager-load .album on every lookup — the cover-embed path below
+            # reads song.album.title, and a lazy load on the async session
+            # raises MissingGreenlet (silently swallowed → cover never embeds).
+            from sqlalchemy.orm import selectinload as _selectinload
             rel_path = job.file_path
             if rel_path.startswith(music_dir + "/"):
                 rel_path = rel_path[len(music_dir) + 1:]
-            song_q = await db.execute(select(Song).where(Song.file_path == rel_path))
+            song_q = await db.execute(
+                select(Song).options(_selectinload(Song.album)).where(Song.file_path == rel_path)
+            )
             song = song_q.scalar_one_or_none()
 
             # Fallback 1: match by MB recording ID (most reliable when available)
             if song is None and job.mb_recording_id:
-                song_q = await db.execute(select(Song).where(Song.mb_recording_id == job.mb_recording_id))
+                song_q = await db.execute(
+                    select(Song).options(_selectinload(Song.album))
+                    .where(Song.mb_recording_id == job.mb_recording_id)
+                )
                 song = song_q.scalar_one_or_none()
 
             # Fallback 2: title+artist exact match on songs added in last 10 min
@@ -1058,7 +1067,7 @@ async def _post_download_hook(job_id: uuid.UUID) -> None:
                 from sqlalchemy import func as _func
                 cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
                 song_q = await db.execute(
-                    select(Song).where(
+                    select(Song).options(_selectinload(Song.album)).where(
                         _func.lower(Song.title) == job.title.lower(),
                         Song.display_artist.ilike(job.artist),
                         Song.added_at >= cutoff,
