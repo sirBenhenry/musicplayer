@@ -17,11 +17,17 @@ async def retry_failed_downloads() -> None:
     try:
         now = datetime.now(timezone.utc)
         async with AsyncSessionLocal() as db:
+            # Cap per run + order by next_retry_at: a container restart resets
+            # the whole backlog to failed at once; re-queuing all of them floods
+            # the Semaphore(4) pipeline (soulseek's 600s ceiling = ~4 jobs/10min)
+            # and starves the API. Drain steadily, oldest-due first.
             result = await db.execute(
                 select(DownloadJob).where(
                     DownloadJob.status == "failed",
                     DownloadJob.next_retry_at <= now,
                 )
+                .order_by(DownloadJob.next_retry_at)
+                .limit(25)
             )
             jobs = result.scalars().all()
 
