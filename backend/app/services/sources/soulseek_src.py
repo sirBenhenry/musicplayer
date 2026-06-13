@@ -187,14 +187,45 @@ async def download(candidate: Candidate, dest_dir: str) -> tuple[bool, str | Non
         for directory in data.get("directories", []):
             for t in directory.get("files", []):
                 if t.get("filename") == filename:
+                    # slskd terminal states are compound, e.g.
+                    # "Completed, Succeeded" / "Completed, Errored" /
+                    # "Completed, Cancelled" / "Completed, TimedOut" /
+                    # "Completed, Rejected". "Completed" alone is NOT success.
                     state = t.get("state", "")
-                    if "Completed" in state:
-                        # slskd downloads into a local path we can derive
-                        local_name = os.path.basename(filename.replace("\\", "/"))
-                        file_path = os.path.join(dest_dir, local_name)
-                        log.info("soulseek: downloaded %s - %s", candidate.artist, candidate.title)
+                    if "Succeeded" in state:
+                        file_path = _resolve_downloaded_path(filename, dest_dir)
+                        log.info("soulseek: downloaded %s - %s -> %s",
+                                 candidate.artist, candidate.title, file_path)
                         return True, file_path
-                    if "Failed" in state or "Cancelled" in state:
+                    if any(s in state for s in
+                           ("Errored", "Cancelled", "Rejected", "TimedOut", "Failed")):
                         raise RuntimeError(f"Soulseek transfer failed: {state}")
 
     raise RuntimeError(f"Soulseek download timed out for '{candidate.artist} - {candidate.title}'")
+
+
+def _resolve_downloaded_path(filename: str, dest_dir: str) -> str:
+    """Find where slskd actually wrote the file.
+
+    slskd saves into a subfolder named after the remote share directory, so the
+    file lands at dest_dir/<RemoteFolder>/<name>, not flat at dest_dir/<name>.
+    Try the flat path first (cheap), else walk dest_dir for the basename and
+    take the newest match. Falls back to the flat path so callers always get a
+    string (the caller verifies existence).
+    """
+    local_name = os.path.basename(filename.replace("\\", "/"))
+    flat = os.path.join(dest_dir, local_name)
+    if os.path.exists(flat):
+        return flat
+    candidates: list[tuple[float, str]] = []
+    for root, _dirs, files in os.walk(dest_dir):
+        if local_name in files:
+            p = os.path.join(root, local_name)
+            try:
+                candidates.append((os.path.getmtime(p), p))
+            except OSError:
+                pass
+    if candidates:
+        candidates.sort(reverse=True)
+        return candidates[0][1]
+    return flat
