@@ -89,7 +89,7 @@ Done in this session. Kept here for the record. If endpoints 500 again, check
 **Process rule going forward** (add to CLAUDE.md when convenient): every container patch-upload MUST
 correspond to a commit. Never hand-edit files only in the container.
 
-### OPS-3 — Stop the Essentia temp-file leak (HIGH)
+### OPS-3 — Stop the Essentia temp-file leak (HIGH) ✅ (2026-06-13, deployed)
 **Problem:** the analysis path downloads every song to `/tmp` inside the container. Leaked files filled
 the host disk (7.6 GB found). Two leak sources:
 - `backend/app/services/essentia_svc.py` — the per-song download/analyse flow (and `_essentia_worker.py`
@@ -166,7 +166,7 @@ lines 313–315 (the comment and the correct `all_kept` computation).
 **Verify:** unit-style check or: create an artist-slot playlist whose songs all have listen_through
 events, run `run_eod_batch()`, confirm a `UserNotification(type="artist_prompt")` row appears.
 
-### BE-3 — Soulseek treats failed transfers as successful downloads (HIGH — wrong/missing files)
+### BE-3 — Soulseek treats failed transfers as successful downloads (HIGH — wrong/missing files) ✅ (2026-06-13, deployed)
 **File:** `backend/app/services/sources/soulseek_src.py` lines 187–198.
 **Problem:** slskd terminal transfer states are compound: `"Completed, Succeeded"`,
 `"Completed, Cancelled"`, `"Completed, TimedOut"`, `"Completed, Errored"`, `"Completed, Rejected"`.
@@ -183,7 +183,7 @@ if any(s in state for s in ("Errored", "Cancelled", "Rejected", "TimedOut", "Fai
 ```
 **Verify:** grep slskd transfer API after a failed download; job must go to `failed`, not `completed`.
 
-### BE-4 — Soulseek download path is derived, not real (HIGH — file_path wrong when slskd nests dirs)
+### BE-4 — Soulseek download path is derived, not real (HIGH — file_path wrong when slskd nests dirs) ✅ (2026-06-13, deployed)
 **File:** same file, lines 192–196.
 **Problem:** the code assumes the file lands flat at `dest_dir/<basename>`. slskd saves into a
 subfolder named after the remote directory (`SLSKD_DOWNLOADS_DIR=/data/music/media/music`, so files
@@ -210,7 +210,7 @@ return True, os.path.join(dest_dir, local_name)  # last-resort old behavior
 the walk if a direct `os.path.exists(flat_path)` hit succeeds first.)
 **Verify:** download a soulseek candidate; `DownloadJob.file_path` must `os.path.exists()`.
 
-### BE-5 — `GET /profiles` loads every song row (incl. 5 KB vectors) just to count (HIGH perf)
+### BE-5 — `GET /profiles` loads every song row (incl. 5 KB vectors) just to count (HIGH perf) ✅ (2026-06-13, deployed)
 **File:** `backend/app/api/profiles.py` lines 43–47.
 **Problem:** per profile it executes `select(Song).where(profile_id==...)` and `len(scalars().all())` —
 loads full ORM rows including the 1280-float `feature_vector`. With 14 profiles × hundreds of songs
@@ -227,7 +227,7 @@ song_count = count_map.get(p.id, 0)
 ```
 **Verify:** endpoint returns same counts, response time drops.
 
-### BE-6 — Deleting a profile with songs/playlists 500s (HIGH)
+### BE-6 — Deleting a profile with songs/playlists 500s (HIGH) ✅ (2026-06-13, deployed)
 **File:** `backend/app/api/profiles.py` `delete_profile` (lines 84–92).
 **Problem:** `songs.profile_id` and `daily_playlists.profile_id` FKs have no `ON DELETE`; deleting a
 profile that has songs or daily playlists raises `IntegrityError` → 500. The mobile dialog explicitly
@@ -272,7 +272,7 @@ keep the download-to-temp logic but call the same full feature extraction used b
 `_analyse_one` to NOT set `analysed_at` when only the vector was extracted, accepting double work later.
 **Verify:** play a never-analysed song → auto-radio works next time AND the song eventually has bpm set.
 
-### BE-9 — library_sync deletes songs (and their profile assignments) on transient Navidrome errors (HIGH, data-loss)
+### BE-9 — library_sync deletes songs (and their profile assignments) on transient Navidrome errors (HIGH, data-loss) ✅ (2026-06-13, deployed)
 **File:** `backend/app/jobs/library_sync.py` lines 84–164.
 **Problem:** if `navidrome.get_artist(nav_id)` fails for an artist (timeout, restart mid-scan), that
 artist’s songs are never added to `seen_song_ids`, and the stale-cleanup at the end **deletes them
@@ -295,7 +295,7 @@ elif fetch_failures:
 ```
 **Verify:** stop Navidrome mid-sync; no songs are deleted.
 
-### BE-10 — Notification spam: 229 duplicate `exhausted` notifications (HIGH UX)
+### BE-10 — Notification spam: 229 duplicate `exhausted` notifications (HIGH UX) ✅ (2026-06-13, deployed; 366 exhausted dupes dismissed live)
 **Files:** `backend/app/services/download_pipeline.py` `_handle_failure` (lines 941–974), and
 `backend/app/jobs/playlist_health.py` `retry_playlist_songs` (lines 28–84).
 **Problem:** `retry_playlist_songs` resets `exhausted` playlist jobs back to `failed` every 30 min;
@@ -334,7 +334,7 @@ if isinstance(data, list):
 ```
 **Verify:** import a Spotify playlist → UserPlaylist gets the real name.
 
-### BE-12 — Stream proxy ignores HTTP Range (MEDIUM — seek robustness)
+### BE-12 — Stream proxy ignores HTTP Range (MEDIUM — seek robustness) ✅ (2026-06-13, deployed)
 **File:** `backend/app/api/library.py` `stream_audio` (lines 35–58).
 **Problem:** the proxy never forwards the `Range` header and always returns 200 from byte 0. ExoPlayer
 (RNTP) uses Range requests to seek into unbuffered regions; without it, seeks force a full re-download
@@ -359,7 +359,7 @@ async def stream_audio(navidrome_id: str, request: Request):
 **Verify:** `curl -H "Range: bytes=100000-" .../stream/<id> -o /dev/null -D -` → `206` with
 `Content-Range`. In-app seeking becomes instant.
 
-### BE-13 — Post-download cover embed dies on lazy `song.album` load (MEDIUM)
+### BE-13 — Post-download cover embed dies on lazy `song.album` load (MEDIUM) ✅ (2026-06-13, deployed)
 **File:** `backend/app/services/download_pipeline.py` `_post_download_hook` line ~1064
 (`album_name = song.album.title if song.album else None`).
 **Problem:** `song` is loaded without `selectinload(Song.album)`; accessing `.album` on an async
@@ -434,12 +434,12 @@ system-status response may take a while (thread), subsequent ones instant.
 only API consumers (MCP).
 **Fix:** `q = q.where(or_(Song.title.ilike(f"%{search}%"), Song.display_artist.ilike(f"%{search}%"), Song.title_romanized.ilike(f"%{search}%")))`.
 
-### BE-16 — Dead/garbage route in profiles.py (LOW, cleanup)
+### BE-16 — Dead/garbage route in profiles.py (LOW, cleanup) ✅ (2026-06-13, deployed)
 **File:** `backend/app/api/profiles.py` lines 99–101: `@router.post("/../songs/{song_id}/assign")`.
 **Fix:** delete `_unused()` and its decorator; also delete the unused `AssignRequest` model and the
 orphaned helper `assign_song_profile` if nothing imports it (grep first — nothing does).
 
-### BE-17 — `_enrich_songs` does up to 4 sequential queries per playlist song (LOW-MED perf)
+### BE-17 — `_enrich_songs` does up to 4 sequential queries per playlist song (LOW-MED perf) ✅ (2026-06-13, deployed)
 **File:** `backend/app/api/discovery.py` lines 199–340.
 **Problem:** opening a daily playlist with 9 songs costs ~20–40 queries; `/discovery/today` with 4
 playlists ~100+. Tolerable single-user, but it’s the home screen’s critical path.
@@ -789,7 +789,7 @@ receive them — gate at call site). Default DeepSeek path stays tool-free. Low 
 
 ### SRC-1 — Soulseek result/state handling — BE-3 + BE-4 (above). Highest impact in this phase.
 
-### SRC-2 — Stale `queued` backlog drains too slowly after restarts (MEDIUM)
+### SRC-2 — Stale `queued` backlog drains too slowly after restarts (MEDIUM) ✅ (2026-06-13, deployed)
 **Observation:** 123 jobs sat `queued` with only 4 `downloading`. `request_download` fires
 `_run_pipeline` as an asyncio task gated by `Semaphore(4)`; a container restart wipes those tasks, and
 startup only resets them to `failed` → they wait for the 15-min retry job, which re-queues ALL of them
