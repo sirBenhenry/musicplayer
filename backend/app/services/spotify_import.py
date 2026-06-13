@@ -57,6 +57,11 @@ async def fetch_spotify_playlist(url: str) -> tuple[str | None, list[dict]]:
     playlist_name: str | None = None
     if isinstance(data, list):
         songs = data
+        # spotdl save writes a flat list of song objects, each carrying the
+        # source playlist name in `list_name` — read it so the UserPlaylist
+        # gets the real name instead of "Imported Playlist".
+        if songs and isinstance(songs[0], dict):
+            playlist_name = songs[0].get("list_name") or songs[0].get("list")
     elif isinstance(data, dict):
         songs = data.get("songs", [])
         playlist_name = data.get("name") or data.get("list_name") or data.get("list")
