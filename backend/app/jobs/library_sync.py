@@ -32,6 +32,11 @@ async def run_library_sync() -> dict:
     log.info("Library sync started")
     counts = {"artists": 0, "albums": 0, "songs": 0, "removed": 0}
     seen_song_ids: set[str] = set()
+    # Track Navidrome fetch failures — a transient error (timeout, restart
+    # mid-scan) leaves an artist's songs out of seen_song_ids. If we then run
+    # the stale-cleanup, those songs get DELETED and reappear later as NULL-
+    # profile rows (silent loss of profile assignments). Skip cleanup if any.
+    fetch_failures = 0
 
     async with AsyncSessionLocal() as db:
         # --- Artists ---
@@ -86,6 +91,7 @@ async def run_library_sync() -> dict:
                 artist_detail = await navidrome.get_artist(nav_id)
             except Exception as e:
                 log.warning("Failed to fetch artist %s: %s", nav_id, e)
+                fetch_failures += 1
                 continue
 
             for al in artist_detail.get("album", []):
@@ -107,6 +113,7 @@ async def run_library_sync() -> dict:
                     album_detail = await navidrome.get_album(al["id"])
                 except Exception as e:
                     log.warning("Failed to fetch album %s: %s", al["id"], e)
+                    fetch_failures += 1
                     continue
 
                 result2 = await db.execute(select(Album).where(Album.navidrome_id == al["id"]))
@@ -152,7 +159,11 @@ async def run_library_sync() -> dict:
             await db.commit()
 
         # --- Cleanup stale songs (no longer in Navidrome) ---
-        if seen_song_ids:
+        if fetch_failures:
+            log.warning("library_sync: skipping stale cleanup — %d Navidrome fetch failures "
+                        "this run (cleanup would risk deleting songs + profile assignments)",
+                        fetch_failures)
+        elif seen_song_ids:
             all_songs = await db.execute(select(Song.id, Song.navidrome_id, Song.title))
             stale = [(row.id, row.navidrome_id, row.title) for row in all_songs if row.navidrome_id not in seen_song_ids]
             if stale:
