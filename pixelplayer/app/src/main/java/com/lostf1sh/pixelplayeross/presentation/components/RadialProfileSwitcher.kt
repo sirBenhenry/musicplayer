@@ -1,13 +1,17 @@
 package com.lostf1sh.pixelplayeross.presentation.components
 
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
@@ -18,32 +22,41 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lostf1sh.pixelplayeross.data.backend.model.BackendProfile
 import com.lostf1sh.pixelplayeross.presentation.viewmodel.DiscoveryViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * Radial taste-profile switcher — hold the Home tab, profile nodes fan out,
- * drag onto one and release to select. Port of the old app's signature
- * interaction, driven by a plain singleton so the nav-bar gesture (deep in
- * the player sheet) and the fullscreen overlay (root of MainActivity) don't
- * need a shared ViewModel.
+ * Radial taste-profile switcher — hold the Home tab, nodes spring out with
+ * bouncy per-node physics; drag onto one and release to select.
+ *
+ * Faithful port of the old app's interaction: bottom-up grid rows (max 3 per
+ * row, centred on screen so nothing lands off-screen), seeded jitter for an
+ * organic look, per-node underdamped springs with 35ms stagger, a hub ring
+ * at the press point, and a ~52dp hover threshold.
  */
 object RadialSwitcherController {
     val isOpen = MutableStateFlow(false)
@@ -78,7 +91,10 @@ fun profileColor(profile: BackendProfile, isDark: Boolean): Color {
     return if (isDark) Color.hsv(hue, 0.42f, 0.80f) else Color.hsv(hue, 0.48f, 0.66f)
 }
 
-private data class Node(val profile: BackendProfile, val center: Offset)
+private data class Node(val profile: BackendProfile, val target: Offset)
+
+private val NodeRadius = 37.dp
+private val HoverThreshold = 54.dp
 
 @Composable
 fun RadialProfileOverlay() {
@@ -98,43 +114,51 @@ fun RadialProfileOverlay() {
     }
 
     val density = LocalDensity.current
-    val nodeSize = 62.dp
-    val nodeSizePx = with(density) { nodeSize.toPx() }
-    val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val configuration = LocalConfiguration.current
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+    val nodeRadiusPx = with(density) { NodeRadius.toPx() }
+    val hoverThresholdPx = with(density) { HoverThreshold.toPx() }
+    val isDark = isSystemInDarkTheme()
 
-    // Fan the nodes in up to two arcs above the anchor (nav bar is at the bottom).
-    val nodes = remember(profiles, anchor) {
-        val innerCount = minOf(profiles.size, 6)
-        val outerCount = profiles.size - innerCount
+    // Layout: bottom-up grid rows, centred on SCREEN (the anchor may sit at
+    // the screen edge — the Home tab is the leftmost nav item). Gap sizing
+    // keeps 74dp nodes from overlapping; seeded jitter keeps it organic.
+    val nodes = remember(profiles, anchor, screenWidthPx) {
+        val colGapPx = with(density) { 106.dp.toPx() }
+        val rowGapPx = with(density) { 102.dp.toPx() }
+        val baseYPx = anchor.y - with(density) { 116.dp.toPx() }
+        val minX = nodeRadiusPx + with(density) { 6.dp.toPx() }
+        val maxX = screenWidthPx - nodeRadiusPx - with(density) { 6.dp.toPx() }
+        val centerX = screenWidthPx / 2f
+        val jitterX = with(density) { 11.dp.toPx() }
+        val jitterY = with(density) { 8.dp.toPx() }
+
         val result = mutableListOf<Node>()
-        val innerR = with(density) { 128.dp.toPx() }
-        val outerR = with(density) { 214.dp.toPx() }
-        fun arc(count: Int, radius: Float, items: List<BackendProfile>) {
-            if (items.isEmpty()) return
-            // Spread across 150° centred straight up (90°..? in screen coords up = -y)
-            val spread = Math.toRadians(150.0)
-            val start = Math.toRadians(195.0) // left-leaning start
-            items.forEachIndexed { i, p ->
-                val t = if (count == 1) 0.5 else i / (count - 1.0)
-                val angle = start + t * spread
-                val x = anchor.x + (radius * cos(angle)).toFloat()
-                val y = anchor.y + (radius * sin(angle)).toFloat()
-                result.add(Node(p, Offset(x, y)))
+        var idx = 0
+        var row = 0
+        while (idx < profiles.size) {
+            val remaining = profiles.size - idx
+            val colsInRow = min(3, remaining)
+            val rowY = baseYPx - row * rowGapPx
+            val rowStartX = centerX - ((colsInRow - 1) * colGapPx) / 2f
+            for (col in 0 until colsInRow) {
+                val x = (rowStartX + col * colGapPx + (sin(idx * 2.6 + 1.1) * jitterX).toFloat())
+                    .coerceIn(minX, maxX)
+                val y = rowY + (cos(idx * 1.8 + 0.5) * jitterY).toFloat()
+                result.add(Node(profiles[idx], Offset(x, y)))
+                idx++
             }
+            row++
         }
-        arc(innerCount, innerR, profiles.take(innerCount))
-        if (outerCount > 0) arc(outerCount, outerR, profiles.drop(innerCount))
         result
     }
 
-    // Highlight the node closest to the finger, but only within grab distance.
-    val grabRadiusPx = nodeSizePx * 1.15f
+    // Hover: nearest node within threshold of the finger.
     val highlighted = remember(pointer, nodes) {
-        nodes.minByOrNull { hypot(it.center.x - pointer.x, it.center.y - pointer.y) }
-            ?.takeIf { hypot(it.center.x - pointer.x, it.center.y - pointer.y) <= grabRadiusPx }
+        nodes.minByOrNull { hypot(it.target.x - pointer.x, it.target.y - pointer.y) }
+            ?.takeIf { hypot(it.target.x - pointer.x, it.target.y - pointer.y) <= hoverThresholdPx }
     }
 
-    // Finger released: commit highlighted profile (if any) and close.
     LaunchedEffect(releaseTick) {
         if (releaseTick > 0L) {
             highlighted?.let { discoveryViewModel.selectProfile(it.profile.id) }
@@ -142,71 +166,155 @@ fun RadialProfileOverlay() {
         }
     }
 
+    val backdropAlpha by animateFloatAsState(
+        targetValue = 0.5f,
+        animationSpec = tween(220),
+        label = "backdrop",
+    )
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.55f)),
+            .background(Color.Black.copy(alpha = backdropAlpha)),
     ) {
-        nodes.forEach { node ->
-            val isHighlighted = node === highlighted
-            val isActive = node.profile.id == activeProfileId
-            val scale by animateFloatAsState(
-                targetValue = if (isHighlighted) 1.22f else 1f,
-                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                label = "nodeScale",
+        HubRing(anchor)
+
+        nodes.forEachIndexed { index, node ->
+            ProfileNodeView(
+                node = node,
+                index = index,
+                anchor = anchor,
+                isHovered = node === highlighted,
+                isActive = node.profile.id == activeProfileId,
+                isDark = isDark,
+                nodeRadiusPx = nodeRadiusPx,
             )
-            val color = profileColor(node.profile, isDark)
-
-            Box(
-                modifier = Modifier
-                    .offset {
-                        IntOffset(
-                            (node.center.x - nodeSizePx / 2).roundToInt(),
-                            (node.center.y - nodeSizePx / 2).roundToInt(),
-                        )
-                    }
-                    .size(nodeSize)
-                    .scale(scale)
-                    .graphicsLayer { shadowElevation = if (isHighlighted) 18f else 6f }
-                    .clip(CircleShape)
-                    .background(if (isHighlighted) color else color.copy(alpha = 0.92f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = node.profile.name.take(2).uppercase(),
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                if (isActive) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .activeRing(),
-                    )
-                }
-            }
-
-            // Label under the highlighted node
-            if (isHighlighted) {
-                Text(
-                    text = node.profile.name,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.labelLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.offset {
-                        IntOffset(
-                            (node.center.x - nodeSizePx).roundToInt(),
-                            (node.center.y + nodeSizePx * 0.78f).roundToInt(),
-                        )
-                    },
-                )
-            }
         }
     }
 }
 
-/** 2.5dp white ring marking the currently active profile. */
-private fun Modifier.activeRing(): Modifier = border(2.5.dp, Color.White, CircleShape)
+@Composable
+private fun HubRing(anchor: Offset) {
+    val density = LocalDensity.current
+    val ringRadius = 34.dp
+    val scale = remember { Animatable(0.5f) }
+    val alpha = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        launch { alpha.animateTo(1f, tween(200)) }
+        scale.animateTo(1f, spring(dampingRatio = 0.42f, stiffness = 140f))
+    }
+    val ringRadiusPx = with(density) { ringRadius.toPx() }
+    Box(
+        modifier = Modifier
+            .offset {
+                IntOffset(
+                    (anchor.x - ringRadiusPx).roundToInt(),
+                    (anchor.y - ringRadiusPx).roundToInt(),
+                )
+            }
+            .size(ringRadius * 2)
+            .scale(scale.value)
+            .alpha(alpha.value)
+            .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape),
+    )
+}
+
+@Composable
+private fun ProfileNodeView(
+    node: Node,
+    index: Int,
+    anchor: Offset,
+    isHovered: Boolean,
+    isActive: Boolean,
+    isDark: Boolean,
+    nodeRadiusPx: Float,
+) {
+    // Per-node spring physics — slightly different constants per index so the
+    // formation settles asynchronously (the "physics-based bouncy" feel).
+    val progress = remember(node.profile.id) { Animatable(0f) }
+    LaunchedEffect(node.profile.id) {
+        delay(index * 35L)
+        val dampingRatio = 0.34f + (index % 4) * 0.045f   // underdamped = visible bounce
+        val stiffness = 148f + (sin(index * 1.9) * 22).toFloat()
+        progress.animateTo(1f, spring(dampingRatio = dampingRatio, stiffness = stiffness))
+    }
+
+    val hoverScale by animateFloatAsState(
+        targetValue = if (isHovered) 1.22f else 1f,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = 260f),
+        label = "hover",
+    )
+
+    val p = progress.value
+    val cx = anchor.x + (node.target.x - anchor.x) * p
+    val cy = anchor.y + (node.target.y - anchor.y) * p
+
+    val surface = MaterialTheme.colorScheme.surface
+    val primary = MaterialTheme.colorScheme.primary
+    val dotColor = profileColor(node.profile, isDark)
+
+    Box(
+        modifier = Modifier
+            .offset {
+                IntOffset(
+                    (cx - nodeRadiusPx).roundToInt(),
+                    (cy - nodeRadiusPx).roundToInt(),
+                )
+            }
+            .size(NodeRadius * 2)
+            .scale(hoverScale)
+            .alpha(p.coerceIn(0f, 1f))
+            .graphicsLayer {
+                shadowElevation = if (isHovered) 24f else 8f
+                shape = CircleShape
+            }
+            .clip(CircleShape)
+            .background(if (isHovered) primary else surface)
+            .then(
+                when {
+                    isHovered -> Modifier
+                    isActive -> Modifier.border(2.dp, primary, CircleShape)
+                    else -> Modifier.border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                        CircleShape,
+                    )
+                }
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(horizontal = 6.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(if (isHovered) MaterialTheme.colorScheme.onPrimary else dotColor),
+            )
+            Text(
+                text = node.profile.name,
+                color = if (isHovered) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurface,
+                fontSize = 10.sp,
+                lineHeight = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+        if (isActive && !isHovered) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 7.dp)
+                    .size(5.dp)
+                    .clip(CircleShape)
+                    .background(primary),
+            )
+        }
+    }
+}
