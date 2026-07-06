@@ -242,6 +242,32 @@ class BackendApiService @Inject constructor(
         postJson("/playback/progress", body)
     }
 
+    // ─── Auto-radio ──────────────────────────────────────────────────────
+
+    /** Chain of vibe-matched next songs. Returns navidrome ids (may be empty). */
+    suspend fun getAutoRadioBatch(
+        seedNavidromeId: String,
+        count: Int,
+        profileId: String?,
+        bannedNavidromeIds: List<String>,
+    ): List<String> {
+        val params = buildString {
+            append("/queue/auto-radio-batch?navidrome_id=")
+            append(java.net.URLEncoder.encode(seedNavidromeId, "UTF-8"))
+            append("&count=").append(count)
+            profileId?.let { append("&profile_id=").append(it) }
+            if (bannedNavidromeIds.isNotEmpty()) {
+                append("&banned_navidrome_ids=")
+                append(java.net.URLEncoder.encode(bannedNavidromeIds.joinToString(","), "UTF-8"))
+            }
+        }
+        val obj = JSONObject(getJson(params))
+        val arr = obj.optJSONArray("songs") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.getJSONObject(i).optStringOrNull("navidrome_id")
+        }
+    }
+
     // ─── Downloads ───────────────────────────────────────────────────────
 
     suspend fun getDownloads(limit: Int = 100): List<BackendDownloadJob> {

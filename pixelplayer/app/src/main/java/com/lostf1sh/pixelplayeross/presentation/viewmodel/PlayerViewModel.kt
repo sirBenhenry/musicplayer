@@ -273,7 +273,8 @@ class PlayerViewModel @Inject constructor(
     val multiSelectionStateHolder: MultiSelectionStateHolder,
     val playlistSelectionStateHolder: PlaylistSelectionStateHolder,
     private val sessionToken: SessionToken,
-    private val mediaControllerFactory: com.lostf1sh.pixelplayeross.data.media.MediaControllerFactory
+    private val mediaControllerFactory: com.lostf1sh.pixelplayeross.data.media.MediaControllerFactory,
+    private val autoRadioManager: com.lostf1sh.pixelplayeross.data.backend.AutoRadioManager
 ) : ViewModel() {
 
     private val _playerUiState = MutableStateFlow(PlayerUiState())
@@ -846,6 +847,38 @@ class PlayerViewModel @Inject constructor(
         lyricsStateHolder.initialize(viewModelScope, lyricsLoadCallback, playbackStateHolder.stablePlayerState)
         playbackStateHolder.initialize(coroutineScope = viewModelScope)
         themeStateHolder.initialize(viewModelScope)
+
+        // ── Auto-radio: extend the queue with vibe-matched songs when the
+        // last track starts playing. Suppressed during daily-slot review
+        // sessions (skip-to-delete) and when repeat is on.
+        viewModelScope.launch {
+            var lastFetchKey: String? = null
+            combine(stablePlayerState, queueFlow) { state, queue -> state to queue }
+                .collect { (state, queue) ->
+                    val song = state.currentSong ?: return@collect
+                    if (!state.isPlaying) return@collect
+                    if (state.repeatMode != Player.REPEAT_MODE_OFF) return@collect
+                    if (queue.isEmpty()) return@collect
+                    val index = state.currentMediaItemIndex
+                    if (index !in queue.indices) return@collect
+                    if (queue.size - 1 - index > 1) return@collect
+                    if (song.navidromeId == null) return@collect
+                    if (!autoRadioManager.isAvailable || autoRadioManager.isSuppressed) return@collect
+
+                    val fetchKey = "${song.id}#${queue.size}"
+                    if (fetchKey == lastFetchKey) return@collect
+                    lastFetchKey = fetchKey
+
+                    val added = autoRadioManager.nextBatch(
+                        seed = song,
+                        recentQueueNavIds = queue.mapNotNull { it.navidromeId },
+                    )
+                    if (added.isNotEmpty()) {
+                        added.forEach { addSongToQueue(it) }
+                        Timber.d("AutoRadio: appended %d songs after %s", added.size, song.title)
+                    }
+                }
+        }
 
         // On cold start, the MediaController connects asynchronously, leaving stablePlayerState.currentSong
         // null until that happens. Pre-load the palette from the persisted snapshot so the mini player

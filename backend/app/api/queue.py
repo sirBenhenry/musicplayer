@@ -3,7 +3,6 @@
 The playback queue itself lives client-side in RNTP; the old server-side
 in-memory queue endpoints were dead (and crashed on lazy artist load) — removed.
 """
-import asyncio
 import logging
 import math
 import random
@@ -23,27 +22,63 @@ router = APIRouter(prefix="/queue", tags=["queue"])
 log = logging.getLogger(__name__)
 
 # ── Tuning constants ──────────────────────────────────────────────────────────
-_SAME_ARTIST_PENALTY = 0.30  # score penalty for same artist
-_RECENCY_HALF_LIFE_H = 4.0   # hours at which recency penalty = 0.5 * max
-_RECENCY_MAX_PENALTY = 0.55  # maximum recency penalty (for very recently played)
-_TEMPERATURE = 0.05           # softmax temperature — tight with 1280-dim cosine embeddings
-_SHORT_BAN_PENALTY = 10.0    # effectively infinite penalty for short-banned songs
+_SAME_ARTIST_PENALTY = 0.30  # penalty when candidate artist == one of the last picks
+_RECENCY_HALF_LIFE_H = 6.0   # hours at which recency penalty = 0.5 * max
+_RECENCY_MAX_PENALTY = 0.45  # maximum recency penalty (for very recently played)
+_RECENCY_WINDOW_H = 48.0     # how far back plays still cost something
+_RECENCY_MAX_ROWS = 120      # cap on recency rows fetched
+_ANCHOR_WEIGHT = 0.55        # chain queries: weight of the original seed vs current song
+_RANK_DECAY = 0.78           # rank-based sampling: P(rank i) ∝ decay^i over top-K
+_RANK_TOP_K = 12             # sample among this many best candidates
+_ARTIST_MEMORY = 2           # how many previous picks' artists get penalised
 
 
 # ── Auto-radio ────────────────────────────────────────────────────────────────
 
+async def _resolve_seed_id(
+    db: AsyncSession, song_id: str | None, navidrome_id: str | None
+) -> str | None:
+    """Accept either a backend song UUID or a Navidrome id as the seed."""
+    if song_id:
+        return song_id
+    if navidrome_id:
+        r = await db.execute(
+            select(Song.id).where(Song.navidrome_id == navidrome_id).limit(1)
+        )
+        sid = r.scalar_one_or_none()
+        return str(sid) if sid else None
+    return None
+
+
+async def _navidrome_to_song_ids(db: AsyncSession, nav_ids: set[str]) -> set[str]:
+    if not nav_ids:
+        return set()
+    r = await db.execute(
+        select(Song.id).where(Song.navidrome_id.in_(nav_ids))
+    )
+    return {str(row[0]) for row in r.fetchall()}
+
+
 @router.get("/auto-radio")
 async def auto_radio(
-    song_id: str,
+    song_id: str | None = None,
+    navidrome_id: str | None = None,
     profile_id: str | None = None,
     scope: str = "profile",
     banned_ids: str | None = None,
+    banned_navidrome_ids: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: str = Depends(require_auth),
 ):
     """Return best next song using acoustic similarity + scoring. Single pick."""
+    seed_id = await _resolve_seed_id(db, song_id, navidrome_id)
+    if not seed_id:
+        raise HTTPException(404, "Seed song not found")
     banned = set((banned_ids or "").split(",")) - {""}
-    result = await _pick_next(db, song_id, profile_id, scope, banned, already_picked=set())
+    banned |= await _navidrome_to_song_ids(
+        db, set((banned_navidrome_ids or "").split(",")) - {""})
+    result = await _pick_next(db, seed_id, profile_id, scope, banned,
+                              already_picked=set())
     if not result:
         raise HTTPException(404, "No suitable song found")
     return result
@@ -51,33 +86,57 @@ async def auto_radio(
 
 @router.get("/auto-radio-batch")
 async def auto_radio_batch(
-    song_id: str,
+    song_id: str | None = None,
+    navidrome_id: str | None = None,
     count: int = 5,
     profile_id: str | None = None,
     scope: str = "profile",
     banned_ids: str | None = None,
+    banned_navidrome_ids: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: str = Depends(require_auth),
 ):
-    """Return a chain of `count` songs (each picked from the previous).
+    """Return a chain of `count` songs continuing the seed's vibe.
 
-    While playing song A, call with song_id=A to pre-compute [B, C, D, E, F].
-    B is picked from A, C from B, etc. — so the chain feels natural.
+    Each pick is queried with a blend of the ORIGINAL seed vector and the
+    previous pick — the chain evolves but stays tethered to the vibe the
+    user started from, instead of random-walking away from it.
     """
+    seed_id = await _resolve_seed_id(db, song_id, navidrome_id)
+    if not seed_id:
+        raise HTTPException(404, "Seed song not found")
     count = max(1, min(count, 10))
     banned = set((banned_ids or "").split(",")) - {""}
-    already_picked: set[str] = {song_id}  # exclude original seed from later chain positions
+    banned |= await _navidrome_to_song_ids(
+        db, set((banned_navidrome_ids or "").split(",")) - {""})
+    already_picked: set[str] = {seed_id}
 
+    import uuid as _uuid
+    anchor_vec = None
+    try:
+        seed_row = await db.get(Song, _uuid.UUID(seed_id))
+        if seed_row is not None and seed_row.feature_vector is not None:
+            anchor_vec = seed_row.feature_vector
+    except ValueError:
+        pass
+
+    recent_artist_ids: list[str] = []
     chain: list[dict] = []
-    current_id = song_id
+    current_id = seed_id
 
     for _ in range(count):
-        pick = await _pick_next(db, current_id, profile_id, scope, banned, already_picked)
+        pick = await _pick_next(
+            db, current_id, profile_id, scope, banned, already_picked,
+            anchor_vec=anchor_vec, recent_artist_ids=recent_artist_ids,
+        )
         if not pick:
             break
         chain.append(pick)
         already_picked.add(pick["id"])
         current_id = pick["id"]
+        if pick.get("artist_id"):
+            recent_artist_ids.append(str(pick["artist_id"]))
+            del recent_artist_ids[:-_ARTIST_MEMORY]
 
     return {"songs": chain}
 
@@ -91,16 +150,22 @@ async def _pick_next(
     scope: str,
     banned_ids: set[str],
     already_picked: set[str],
+    anchor_vec=None,
+    recent_artist_ids: list[str] | None = None,
 ) -> dict | None:
     """
-    Adaptive recommendation:
-    1. Count profile songs → derive pool_size, recency_window, max_recent_exclusions
-    2. Fetch recent plays from SongEvent (within window, capped at max_recent)
-    3. Query top candidates by cosine similarity
-    4. Score each: similarity - same_artist_penalty - recency_decay
-    5. Softmax + weighted random pick
+    Vibe-preserving recommendation:
+    1. Query vector = blend of the chain's ORIGINAL seed and the current song
+       (anchoring — a chain of nearest-neighbour hops drifts off-vibe fast)
+    2. Query top candidates by cosine similarity (no hard filters — small
+       libraries need the full pool; key/BPM/mood live in the score instead)
+    3. Score: 45% embedding + 20% mood-feel + 15% BPM + 10% key mode + 10% vibe
+       − artist repeats − recency decay
+    4. Rank-decay sampling over the top K — order varies between sessions
+       regardless of how bunched the raw scores are.
     """
     import uuid as _uuid
+    import numpy as _np
 
     # ── Load seed song ──────────────────────────────────────────────────────
     try:
@@ -114,12 +179,12 @@ async def _pick_next(
 
     use_profile = scope == "profile" and profile_id is not None
 
-    # ── Adaptive parameters based on profile size ───────────────────────────
+    # ── Adaptive pool size based on profile size ────────────────────────────
     profile_count = await _count_profile_songs(db, profile_id if use_profile else None)
-    pool_size, recency_window_h, max_recent = _adaptive_params(profile_count)
+    pool_size = _adaptive_pool(profile_count)
 
     # ── Recent plays from SongEvent ─────────────────────────────────────────
-    recency_map = await _get_recency_map(db, recency_window_h, max_recent)
+    recency_map = await _get_recency_map(db, _RECENCY_WINDOW_H, _RECENCY_MAX_ROWS)
 
     # ── Build exclusion set ─────────────────────────────────────────────────
     excluded = {str(seed.id)} | banned_ids | already_picked
@@ -127,20 +192,24 @@ async def _pick_next(
     # ── Query candidates (vector-only — no random fallback) ─────────────────
     if seed.feature_vector is None:
         # Trigger background analysis for this song so it's ready next time
-        asyncio.create_task(_analyse_one(str(seed.id)))
+        from ..core.tasks import spawn
+        spawn(_analyse_one(str(seed.id)), name=f"analyse-{seed.id}")
         return None
 
-    candidates = await _query_by_vector(
-        db, seed.feature_vector, profile_id if use_profile else None,
-        excluded, pool_size * 2, seed_mode=seed.key_mode, seed_bpm=seed.bpm
-    )
+    seed_vec = _np.asarray(seed.feature_vector, dtype=float)
+    if anchor_vec is not None:
+        a = _np.asarray(anchor_vec, dtype=float)
+        query_vec = _ANCHOR_WEIGHT * a + (1.0 - _ANCHOR_WEIGHT) * seed_vec
+        norm = _np.linalg.norm(query_vec)
+        if norm > 0:
+            query_vec = query_vec / norm
+    else:
+        query_vec = seed_vec
 
-    # If filtered pool is too small, retry without BPM/mode filters
-    if len(candidates) < 5:
-        candidates = await _query_by_vector(
-            db, seed.feature_vector, profile_id if use_profile else None,
-            excluded, pool_size * 2
-        )
+    candidates = await _query_by_vector(
+        db, query_vec, profile_id if use_profile else None,
+        excluded, pool_size * 2
+    )
 
     if not candidates:
         return None
@@ -151,32 +220,38 @@ async def _pick_next(
 
     seed_bpm = seed.bpm
     seed_mode = seed.key_mode
+    penalised_artists = set(recent_artist_ids or [])
+    if seed.artist_id:
+        penalised_artists.add(str(seed.artist_id))
 
     for c in candidates:
         # Cosine distance 0-2 → similarity 0-1 (embeddings are L2-normalised)
         cosine_sim = max(0.0, 1.0 - c.get("_dist", 1.0))
 
-        # BPM compatibility: linear falloff, 0 at ±20 BPM (null-safe)
+        # BPM compatibility: linear falloff, half/double-tempo aware
         bpm_compat = _bpm_compat(seed_bpm, c.get("bpm"))
 
         # Mode match: 1.0 same, 0.5 null, 0.0 different
         mode_compat = _mode_compat(seed_mode, c.get("key_mode"))
 
-        # Vibe compat: beat_strength + spectral_centroid + dyn_complexity
+        # Vibe compat: beat_strength + spectral_centroid
         vibe_compat = _vibe_compat(seed, c)
 
-        # Weighted hybrid score
+        # Mood-feel: distance across the 5 Essentia mood dimensions — this is
+        # the "same feeling" signal (happy/sad/aggressive/relaxed/party)
+        feel_compat = _feel_compat(seed, c)
+
         acoustic_sim = (
-            0.50 * cosine_sim
-            + 0.20 * bpm_compat
-            + 0.15 * mode_compat
-            + 0.15 * vibe_compat
+            0.45 * cosine_sim
+            + 0.20 * feel_compat
+            + 0.15 * bpm_compat
+            + 0.10 * mode_compat
+            + 0.10 * vibe_compat
         )
 
-        # Same-artist penalty
+        # Artist repeat penalty: current seed + the last few chain picks
         artist_penalty = _SAME_ARTIST_PENALTY if (
-            c.get("artist_id") and seed.artist_id and
-            str(c["artist_id"]) == str(seed.artist_id)
+            c.get("artist_id") and str(c["artist_id"]) in penalised_artists
         ) else 0.0
 
         # Recency penalty: exponential decay
@@ -192,11 +267,32 @@ async def _pick_next(
     if not scored:
         return None
 
-    # ── Softmax weighted pick ────────────────────────────────────────────────
-    scores = [s for s, _ in scored]
-    pick = _softmax_sample(scored, scores, temperature=_TEMPERATURE)
+    return _rank_decay_sample(scored)
 
-    return pick
+
+def _rank_decay_sample(scored: list[tuple[float, dict]]) -> dict:
+    """Sample by rank, not raw score: P(i-th best) ∝ _RANK_DECAY^i over the
+    top K. Scale-free — with 1280-dim cosine scores bunched within a few
+    percent, softmax either collapses to argmax (same order every time) or
+    goes uniform. Rank weights give the best song the edge while keeping
+    every session's order different."""
+    ranked = sorted(scored, key=lambda x: -x[0])[:_RANK_TOP_K]
+    weights = [_RANK_DECAY ** i for i in range(len(ranked))]
+    return random.choices(ranked, weights=weights, k=1)[0][1]
+
+
+def _feel_compat(seed, c: dict) -> float:
+    """Mean closeness across available mood dimensions (0-1 each)."""
+    dims = ("mood_happy", "mood_sad", "mood_aggressive", "mood_relaxed", "mood_party")
+    diffs = []
+    for d in dims:
+        s_val = getattr(seed, d, None)
+        c_val = c.get(d)
+        if s_val is not None and c_val is not None:
+            diffs.append(min(1.0, abs(float(s_val) - float(c_val))))
+    if not diffs:
+        return 0.5
+    return 1.0 - sum(diffs) / len(diffs)
 
 
 def _bpm_compat(seed_bpm: float | None, cand_bpm: float | None) -> float:
@@ -230,24 +326,13 @@ def _vibe_compat(seed, c: dict) -> float:
     return 0.5
 
 
-def _adaptive_params(profile_count: int) -> tuple[int, float, int]:
-    """Return (pool_size, recency_window_hours, max_recent_exclusions)."""
+def _adaptive_pool(profile_count: int) -> int:
+    """Candidate pool size scaled to library/profile size."""
     if profile_count <= 20:
-        # Tiny: be gentle — small pool, short window, few exclusions
-        pool_size = max(8, profile_count - 1)
-        recency_h = 1.0
-        max_recent = 5
-    elif profile_count <= 80:
-        # Medium
-        pool_size = min(30, int(profile_count * 0.6))
-        recency_h = 3.0
-        max_recent = 10
-    else:
-        # Large
-        pool_size = min(40, int(profile_count * 0.35))
-        recency_h = 5.0
-        max_recent = 15
-    return pool_size, recency_h, max_recent
+        return max(8, profile_count - 1)
+    if profile_count <= 80:
+        return min(30, int(profile_count * 0.6))
+    return min(40, int(profile_count * 0.35))
 
 
 async def _count_profile_songs(db: AsyncSession, profile_id: str | None) -> int:
@@ -291,9 +376,9 @@ async def _query_by_vector(
     profile_id: str | None,
     excluded_ids: set[str],
     limit: int,
-    seed_mode: str | None = None,
-    seed_bpm: float | None = None,
 ) -> list[dict]:
+    """Top candidates by cosine distance. No hard key/BPM filters — those
+    are soft score components; hard-filtering starved small profiles."""
     import uuid as _uuid
 
     excl_list = list(excluded_ids) if excluded_ids else ["00000000-0000-0000-0000-000000000000"]
@@ -319,8 +404,6 @@ async def _query_by_vector(
           AND s.is_staged = FALSE
     """
     params: dict[str, Any] = {"vec": vec_str, "excluded": excl_list}
-    if seed_bpm is not None:
-        params["seed_bpm"] = seed_bpm
 
     if profile_id:
         try:
@@ -329,24 +412,6 @@ async def _query_by_vector(
             params["pid"] = pid
         except ValueError:
             pass
-
-    if seed_mode in ("major", "minor"):
-        base_q += " AND (s.key_mode = :seed_mode OR s.key_mode IS NULL)"
-        params["seed_mode"] = seed_mode
-
-    if seed_mode is not None and "seed_bpm" in params:
-        sbpm = params["seed_bpm"]
-        base_q += (
-            " AND (s.bpm IS NULL"
-            " OR (s.bpm BETWEEN :bpm_min AND :bpm_max)"
-            " OR (s.bpm BETWEEN :bpm_half_min AND :bpm_half_max)"
-            " OR (s.bpm BETWEEN :bpm_dbl_min AND :bpm_dbl_max))"
-        )
-        params.update({
-            "bpm_min": sbpm * 0.80, "bpm_max": sbpm * 1.20,
-            "bpm_half_min": sbpm * 0.40, "bpm_half_max": sbpm * 0.60,
-            "bpm_dbl_min": sbpm * 1.60, "bpm_dbl_max": sbpm * 2.40,
-        })
 
     base_q += f" ORDER BY _dist LIMIT {limit}"
 
@@ -378,23 +443,6 @@ def _row_to_candidate(row) -> dict:
         "spectral_centroid": float(row[17]) if row[17] is not None else None,
         "dyn_complexity": float(row[18]) if row[18] is not None else None,
     }
-
-
-def _softmax_sample(scored: list[tuple[float, dict]], scores: list[float], temperature: float) -> dict:
-    """Weighted random pick using softmax over scores."""
-    if temperature <= 0 or len(scored) == 1:
-        return max(scored, key=lambda x: x[0])[1]
-
-    # Shift scores for numerical stability
-    max_s = max(scores)
-    exp_scores = [math.exp((s - max_s) / temperature) for s in scores]
-    total = sum(exp_scores)
-    if total <= 0:
-        return scored[0][1]
-    weights = [e / total for e in exp_scores]
-
-    chosen = random.choices(scored, weights=weights, k=1)[0]
-    return chosen[1]
 
 
 # ── On-demand analysis trigger ────────────────────────────────────────────────

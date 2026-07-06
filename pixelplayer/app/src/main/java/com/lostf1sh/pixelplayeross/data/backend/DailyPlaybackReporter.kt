@@ -35,6 +35,10 @@ class DailyPlaybackReporter @Inject constructor(
     @Volatile
     private var songIdMap: Map<String, String> = emptyMap()
 
+    /** True while a daily slot's skip-to-delete session is active. */
+    val isArmed: Boolean
+        get() = playlistId != null
+
     fun armContext(playlistId: String, localToBackendIds: Map<String, String>) {
         this.playlistId = playlistId
         this.songIdMap = localToBackendIds
