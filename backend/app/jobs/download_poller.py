@@ -89,7 +89,7 @@ async def _reset_stale_prowlarr_jobs() -> None:
         torrent_map = {t["hash"]: t for t in all_torrents}
         now_ts = time.time()
 
-        reset_ids = []
+        reset_jobs = []
         for job in jobs_with_hash:
             t = torrent_map.get(job.qb_hash or "")
             if t is None:
@@ -99,7 +99,7 @@ async def _reset_stale_prowlarr_jobs() -> None:
             torrent_age_hours = (now_ts - added_on) / 3600
             # Only reset if torrent has been in qBittorrent for 1h+ with no progress
             if progress < 0.01 and torrent_age_hours >= 1:
-                reset_ids.append(job.id)
+                reset_jobs.append(job)
                 try:
                     await qbittorrent.delete_torrent(job.qb_hash)
                 except Exception:
@@ -109,20 +109,28 @@ async def _reset_stale_prowlarr_jobs() -> None:
                     job.artist, job.title, (job.qb_hash or "")[:8], torrent_age_hours,
                 )
 
-        if reset_ids:
+        if reset_jobs:
+            # A stall counts as a real failed attempt. Prowlarr "succeeds" by
+            # merely queuing the torrent, so _handle_failure never runs for it —
+            # without incrementing here, retry_count stays 0 and the same dead
+            # torrent loops through retry → stall → retry forever.
+            from ..services.download_pipeline import _BACKOFF_MINUTES, _MAX_RETRIES
             now = datetime.now(timezone.utc)
-            await db.execute(
-                update(DownloadJob)
-                .where(DownloadJob.id.in_(reset_ids))
-                .values(
-                    status="failed",
-                    last_error="prowlarr torrent stalled (no seeders)",
-                    next_retry_at=now - timedelta(minutes=1),
-                    qb_hash=None,
-                )
-            )
+            for job in reset_jobs:
+                job.retry_count = (job.retry_count or 0) + 1
+                job.last_error = "prowlarr torrent stalled (no seeders)"
+                job.qb_hash = None
+                if job.retry_count > _MAX_RETRIES:
+                    job.status = "exhausted"
+                    job.next_retry_at = None
+                    log.warning("qb_poller: %s - %s exhausted after %d stalled attempts",
+                                job.artist, job.title, job.retry_count)
+                else:
+                    job.status = "failed"
+                    job.next_retry_at = now + timedelta(
+                        minutes=_BACKOFF_MINUTES[job.retry_count - 1])
             await db.commit()
-            log.info("qb_poller: reset %d stale prowlarr jobs to failed", len(reset_ids))
+            log.info("qb_poller: reset %d stale prowlarr jobs (backoff applied)", len(reset_jobs))
 
 
 async def _reset_stale_pipeline_jobs() -> None:
