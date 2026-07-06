@@ -235,14 +235,13 @@ private fun ProfileNodeView(
     isDark: Boolean,
     nodeRadiusPx: Float,
 ) {
-    // Per-node spring physics — slightly different constants per index so the
-    // formation settles asynchronously (the "physics-based bouncy" feel).
+    // One uniform spring for every node + a tight sequential stagger: the
+    // formation ripples outward as a clean wave (single gentle overshoot),
+    // not a shower of independently bouncing balls.
     val progress = remember(node.profile.id) { Animatable(0f) }
     LaunchedEffect(node.profile.id) {
-        delay(index * 35L)
-        val dampingRatio = 0.34f + (index % 4) * 0.045f   // underdamped = visible bounce
-        val stiffness = 148f + (sin(index * 1.9) * 22).toFloat()
-        progress.animateTo(1f, spring(dampingRatio = dampingRatio, stiffness = stiffness))
+        delay(index * 22L)
+        progress.animateTo(1f, spring(dampingRatio = 0.68f, stiffness = 520f))
     }
 
     val hoverScale by animateFloatAsState(
