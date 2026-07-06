@@ -42,6 +42,10 @@ class BackendSearchViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(BackendSearchUiState())
     val uiState: StateFlow<BackendSearchUiState> = _uiState.asStateFlow()
 
+    /** Profile new downloads get assigned to (null = catchall active / none). */
+    val downloadTargetProfile
+        get() = backendRepository.activeProfile?.takeIf { !it.isCatchall }
+
     private var searchJob: Job? = null
 
     fun onQueryChange(query: String) {

@@ -114,11 +114,17 @@ async def search_recordings(
         if len(words) == 1:
             mb_query = query
         elif len(words) <= 5:
-            # The user typed some mix of artist and title with no separator.
-            # OR together every artist/title split (both directions) plus the
-            # bare query — one MB request covers all interpretations. Bare
-            # terms also match aliases/transliterations (romaji → kanji).
-            clauses = [f'({" AND ".join(_esc(w) for w in words)})']
+            # The user typed a title, an artist, or some mix of both with no
+            # separator. OR together every interpretation — one MB request.
+            # The whole query as an exact title/artist phrase is boosted
+            # hardest: without it, "beat it" drowns under artists named
+            # "Beat" and never returns the song called "Beat It" at all.
+            q_esc = _esc(query)
+            clauses = [
+                f'recording:"{q_esc}"^6',
+                f'artist:"{q_esc}"^3',
+                f'({" AND ".join(_esc(w) for w in words)})',
+            ]
             for i in range(1, len(words)):
                 head = _esc(" ".join(words[:i]))
                 tail = _esc(" ".join(words[i:]))

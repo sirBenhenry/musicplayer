@@ -264,6 +264,7 @@ class DownloadTrackRequest(BaseModel):
     title: str
     artist: str
     mb_recording_id: Optional[str] = None
+    profile_id: Optional[uuid.UUID] = None
 
 
 class DownloadAllRequest(BaseModel):
@@ -288,7 +289,7 @@ async def download_track(body: DownloadTrackRequest, db: Annotated[AsyncSession,
     from ..services.download_pipeline import request_download
     job = await request_download(
         db, item_type="track", artist=body.artist, title=body.title,
-        mb_recording_id=body.mb_recording_id,
+        mb_recording_id=body.mb_recording_id, profile_id=body.profile_id,
     )
     return {"status": "queued", "job_id": str(job.id), "message": f"Searching for {body.artist} — {body.title}"}
 
