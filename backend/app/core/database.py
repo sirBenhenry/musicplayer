@@ -11,6 +11,14 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
+    # A dead Postgres connection must fail fast, not hang a scheduler job for
+    # days (observed: nightly generation blocked 7/1–7/3 until a postgres
+    # restart). pre_ping only covers checkout; these cover mid-query death.
+    pool_recycle=1800,
+    connect_args={
+        "timeout": 30,           # connect timeout (s)
+        "command_timeout": 300,  # per-statement timeout (s)
+    },
 )
 
 AsyncSessionLocal = async_sessionmaker(

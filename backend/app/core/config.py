@@ -26,6 +26,10 @@ class Settings(BaseSettings):
 
     # Navidrome
     NAVIDROME_URL: str = "http://navidrome:4533"
+    # Client-reachable URL handed to mobile clients for their direct Subsonic
+    # connection (NAVIDROME_URL is the Docker-internal hostname). Tailscale IP —
+    # the phone is on the tailnet, so this works from anywhere, not just LAN.
+    NAVIDROME_PUBLIC_URL: str = "http://100.92.64.70:4533"
     NAVIDROME_USER: str = ""
     NAVIDROME_PASS: str = ""
 

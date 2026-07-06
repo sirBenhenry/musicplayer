@@ -11,7 +11,7 @@ Gives up after 3 failures → creates "failed_to_fill" notification.
 import asyncio
 import logging
 import uuid as _uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select, text
 from ..core.database import AsyncSessionLocal
@@ -31,7 +31,12 @@ async def retry_playlist_songs() -> None:
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            select(DailyPlaylist).where(DailyPlaylist.consumed == False)  # noqa: E712
+            select(DailyPlaylist).where(
+                DailyPlaylist.consumed == False,  # noqa: E712
+                # Only actively-served playlists — retrying downloads for
+                # weeks-old unconsumed zombies burned sources every 30 min.
+                DailyPlaylist.date >= date.today() - timedelta(days=3),
+            )
         )
         playlists = result.scalars().all()
 
@@ -97,7 +102,8 @@ async def retry_playlist_songs() -> None:
         await db.commit()
 
     for job_id in reset_job_ids:
-        asyncio.create_task(_run_pipeline(job_id))
+        from ..core.tasks import spawn
+        spawn(_run_pipeline(job_id), name=f"pipeline-{job_id}")
 
     if reset_job_ids:
         log.info("playlist_health: kicked off %d retries", len(reset_job_ids))
@@ -114,7 +120,12 @@ async def morning_playlist_readiness() -> None:
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            select(DailyPlaylist).where(DailyPlaylist.consumed == False)  # noqa: E712
+            select(DailyPlaylist).where(
+                DailyPlaylist.consumed == False,  # noqa: E712
+                # Only actively-served playlists — retrying downloads for
+                # weeks-old unconsumed zombies burned sources every 30 min.
+                DailyPlaylist.date >= date.today() - timedelta(days=3),
+            )
         )
         playlists = result.scalars().all()
 
@@ -156,7 +167,7 @@ async def morning_playlist_readiness() -> None:
 
 
 async def cleanup_unresolvable_playlist_songs() -> None:
-    from sqlalchemy.orm import flag_modified
+    from sqlalchemy.orm.attributes import flag_modified
     """06:00: remove songs from playlist JSONB that still can't be found.
 
     Tries LLM alternative before removing. After _LLM_ALT_MAX attempts, gives up
@@ -167,7 +178,12 @@ async def cleanup_unresolvable_playlist_songs() -> None:
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            select(DailyPlaylist).where(DailyPlaylist.consumed == False)  # noqa: E712
+            select(DailyPlaylist).where(
+                DailyPlaylist.consumed == False,  # noqa: E712
+                # Only actively-served playlists — retrying downloads for
+                # weeks-old unconsumed zombies burned sources every 30 min.
+                DailyPlaylist.date >= date.today() - timedelta(days=3),
+            )
         )
         playlists = result.scalars().all()
 

@@ -44,7 +44,8 @@ async def retry_failed_downloads() -> None:
             await db.commit()
 
         for job in jobs:
-            asyncio.create_task(_run_pipeline(job.id))
+            from ..core.tasks import spawn
+            spawn(_run_pipeline(job.id), name=f"pipeline-{job.id}")
     except Exception:
         log.exception("retry_failed_downloads: unhandled error")
 

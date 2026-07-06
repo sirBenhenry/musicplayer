@@ -18,6 +18,14 @@ router = APIRouter(prefix="/playlists", tags=["playlists"], dependencies=[Depend
 log = logging.getLogger(__name__)
 
 
+def _parse_uuid(value: str) -> uuid.UUID:
+    """Parse a UUID path/body param → 422 (not 500) on malformed input."""
+    try:
+        return uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(422, "Invalid id")
+
+
 class PlaylistOut(BaseModel):
     id: str
     name: str

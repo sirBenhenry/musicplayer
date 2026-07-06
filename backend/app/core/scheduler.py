@@ -1,7 +1,16 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-scheduler = AsyncIOScheduler()
+# coalesce + misfire_grace_time: if a run is missed (hung predecessor with
+# max_instances=1, container pause), run it once as soon as possible instead of
+# silently skipping — the 7/1–7/3 no-generation gap was exactly this skip.
+scheduler = AsyncIOScheduler(
+    job_defaults={
+        "coalesce": True,
+        "misfire_grace_time": 3600,
+        "max_instances": 1,
+    }
+)
 
 
 def start_scheduler(settings) -> None:

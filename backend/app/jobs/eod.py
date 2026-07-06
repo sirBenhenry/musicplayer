@@ -134,7 +134,7 @@ async def _dispatch_playlist(pl, listened_ids, skipped_ids, known_ids):
 async def _process_close_broader(pl, listened_ids, skipped_ids, known_ids):
     """Process interacted songs, remove from JSONB, refill holes. Keep consumed=False."""
     from ..core.config import get_settings
-    from sqlalchemy.orm import flag_modified
+    from sqlalchemy.orm.attributes import flag_modified
 
     assigned = 0
     deleted = 0

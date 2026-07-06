@@ -472,7 +472,8 @@ async def request_download(
     await db.refresh(job)
     job_id = job.id
     await db.commit()
-    asyncio.create_task(_run_pipeline(job_id))
+    from ..core.tasks import spawn
+    spawn(_run_pipeline(job_id), name=f"pipeline-{job_id}")
     return job
 
 
@@ -493,7 +494,8 @@ async def retry_job(job_id: uuid.UUID) -> None:
         job.confidence_score = None
         job.quality_score = None
         job.review_status = None
-    asyncio.create_task(_run_pipeline(job_id))
+    from ..core.tasks import spawn
+    spawn(_run_pipeline(job_id), name=f"pipeline-{job_id}")
 
 
 async def _run_pipeline(job_id: uuid.UUID) -> None:
@@ -884,7 +886,8 @@ async def _run_pipeline_inner(job_id: uuid.UUID) -> None:
 
     # ── Post-download hook (Navidrome rescan + Essentia) ──────────────────────
     if winner_candidate.source not in ("prowlarr",):
-        asyncio.create_task(_post_download_hook(job_id))
+        from ..core.tasks import spawn
+        spawn(_post_download_hook(job_id), name=f"post-dl-{job_id}")
 
 
 async def _run_upgrade_pipeline(job_id: uuid.UUID) -> None:
@@ -1125,7 +1128,7 @@ async def _post_download_hook(job_id: uuid.UUID) -> None:
                 song.is_staged = True
                 try:
                     from ..models.discovery import DailyPlaylist as _DP
-                    from sqlalchemy.orm import flag_modified as _fm_dp
+                    from sqlalchemy.orm.attributes import flag_modified as _fm_dp
                     pl_obj = await db.get(_DP, job.playlist_id)
                     if pl_obj and pl_obj.songs:
                         songs_list = list(pl_obj.songs)
@@ -1154,7 +1157,7 @@ async def _post_download_hook(job_id: uuid.UUID) -> None:
             # Auto-add to UserPlaylist when job was created with a user_playlist_id
             if song and job.user_playlist_id:
                 from ..models.playlists import UserPlaylist as _UPL
-                from sqlalchemy.orm import flag_modified as _fm
+                from sqlalchemy.orm.attributes import flag_modified as _fm
                 upl = await db.get(_UPL, job.user_playlist_id)
                 if upl is not None:
                     songs_list = list(upl.songs or [])

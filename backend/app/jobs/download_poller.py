@@ -170,9 +170,40 @@ async def _reset_stale_pipeline_jobs() -> None:
         log.info("qb_poller: reset %d stale pipeline jobs to failed", len(stale_ids))
 
 
+async def _reset_stale_queued_jobs() -> None:
+    """Jobs stuck at 'queued' for >2h mean their pipeline task never ran or was
+    lost (e.g. GC'd fire-and-forget task, event-loop crash). Flip them to
+    'failed' with an immediate next_retry_at so the retry job re-runs them —
+    previously these were only rescued by a container restart.
+
+    Jobs can legitimately sit at 'queued' while waiting on the pipeline
+    semaphore; _run_pipeline_inner double-checks the status on entry, so a
+    false-positive rescue is skipped by the still-alive task and simply
+    re-queued by the retry job (no duplicate download).
+    """
+    async with AsyncSessionLocal() as db:
+        now = datetime.now(timezone.utc)
+        result = await db.execute(
+            update(DownloadJob)
+            .where(
+                DownloadJob.status == "queued",
+                DownloadJob.created_at < now - timedelta(hours=2),
+            )
+            .values(
+                status="failed",
+                last_error="stuck at queued >30min — pipeline task lost, auto-reset",
+                next_retry_at=now - timedelta(minutes=1),
+            )
+        )
+        await db.commit()
+        if result.rowcount:
+            log.warning("qb_poller: rescued %d jobs stuck at 'queued'", result.rowcount)
+
+
 async def poll_completed_downloads() -> None:
     await _reset_stale_prowlarr_jobs()
     await _reset_stale_pipeline_jobs()
+    await _reset_stale_queued_jobs()
     completed = await qbittorrent.get_torrents(category="music", filter="completed")
     if not completed:
         return
@@ -327,7 +358,7 @@ async def poll_completed_downloads() -> None:
         if staged_jobs:
             from ..models.library import Song as _Song
             from ..models.discovery import DailyPlaylist as _DP
-            from sqlalchemy.orm import flag_modified as _fm_dp
+            from sqlalchemy.orm.attributes import flag_modified as _fm_dp
             from sqlalchemy import func as _func_s
             from datetime import timedelta as _td_s
             async with AsyncSessionLocal() as stage_db:
@@ -380,7 +411,7 @@ async def poll_completed_downloads() -> None:
         if playlist_jobs:
             from ..models.library import Song as _Song
             from ..models.playlists import UserPlaylist as _UPL
-            from sqlalchemy.orm import flag_modified as _fm
+            from sqlalchemy.orm.attributes import flag_modified as _fm
             from sqlalchemy import func as _func_u
             from datetime import timedelta as _td_u
             async with AsyncSessionLocal() as upl_db:

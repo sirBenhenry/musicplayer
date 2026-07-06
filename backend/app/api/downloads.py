@@ -163,7 +163,8 @@ async def review_download(
         job.completed_at = None
         job.auto_expires_at = None
         await db.commit()
-        asyncio.create_task(_run_pipeline(job_id))
+        from ..core.tasks import spawn
+        spawn(_run_pipeline(job_id), name=f"pipeline-{job_id}")
         return {"status": "requeued", "message": "File deleted and pipeline restarted"}
 
     elif body.action == "bad_quality":

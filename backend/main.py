@@ -6,6 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+# httpx logs every request at INFO; the hourly Navidrome sync alone (~10k
+# requests) rotated the whole 20MB docker log in hours, destroying history.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal

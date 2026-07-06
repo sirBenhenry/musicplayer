@@ -90,8 +90,16 @@ async def run_library_sync() -> dict:
             try:
                 artist_detail = await navidrome.get_artist(nav_id)
             except Exception as e:
-                log.warning("Failed to fetch artist %s: %s", nav_id, e)
-                fetch_failures += 1
+                # Subsonic code 70 = artist no longer exists in Navidrome. That
+                # is a definitive "gone", not a transient failure — counting it
+                # as one permanently blocked stale cleanup (each ghost artist
+                # 404s every hourly run, forever). Let cleanup remove its songs;
+                # the artist row itself is dropped once its songs are gone.
+                if "'code': 70" in str(e):
+                    log.info("library_sync: artist %s gone from Navidrome (%s)", nav_id, artist.name)
+                else:
+                    log.warning("Failed to fetch artist %s: %s", nav_id, e)
+                    fetch_failures += 1
                 continue
 
             for al in artist_detail.get("album", []):
@@ -173,6 +181,25 @@ async def run_library_sync() -> dict:
                 await db.execute(delete(Song).where(Song.id.in_(stale_ids)))
                 await db.commit()
                 counts["removed"] = len(stale)
+
+        # --- Cleanup orphan albums/artists (no songs left, nothing user-pinned) ---
+        if not fetch_failures:
+            from sqlalchemy import exists as sa_exists
+            await db.execute(
+                delete(Album).where(~sa_exists().where(Song.album_id == Album.id))
+            )
+            orphan_artists = await db.execute(
+                delete(Artist)
+                .where(
+                    ~sa_exists().where(Song.artist_id == Artist.id),
+                    Artist.followed == False,  # noqa: E712
+                    Artist.lidarr_id.is_(None),
+                    Artist.navidrome_id.not_like("mb:%"),
+                )
+            )
+            await db.commit()
+            if orphan_artists.rowcount:
+                counts["artists_removed"] = orphan_artists.rowcount
 
     log.info("Library sync complete: %s", counts)
     from ..api.library import bump_library_stamp

@@ -17,6 +17,48 @@ from .downloader import queue_downloads
 log = logging.getLogger(__name__)
 
 
+async def _expire_stale_playlists(db, profile_id: str, today: date) -> None:
+    """Delete unconsumed playlists older than 7 days + their staged songs."""
+    import os
+    from datetime import timedelta
+    from ..core.config import get_settings
+
+    cutoff = today - timedelta(days=7)
+    result = await db.execute(
+        select(DailyPlaylist).where(
+            DailyPlaylist.profile_id == profile_id,
+            DailyPlaylist.consumed == False,  # noqa: E712
+            DailyPlaylist.date < cutoff,
+        )
+    )
+    stale = result.scalars().all()
+    if not stale:
+        return
+
+    music_dir = get_settings().MUSIC_DIR
+    for pl in stale:
+        song_ids = [s["id"] for s in (pl.songs or []) if s.get("id")]
+        for sid in song_ids:
+            try:
+                song = await db.get(Song, uuid.UUID(sid))
+            except ValueError:
+                continue
+            if song and song.is_staged:
+                if song.file_path:
+                    abs_path = song.file_path if song.file_path.startswith("/") \
+                        else os.path.join(music_dir, song.file_path)
+                    try:
+                        if os.path.exists(abs_path):
+                            os.remove(abs_path)
+                    except OSError as e:
+                        log.warning("expire: failed to delete file %s: %s", abs_path, e)
+                await db.delete(song)
+        await db.delete(pl)
+        log.info("expired stale playlist %s (slot=%s date=%s, %d staged songs cleaned)",
+                 str(pl.id)[:8], pl.slot, pl.date, len(song_ids))
+    await db.commit()
+
+
 async def generate_for_profile(profile_id: str) -> None:
     llm = get_llm_provider()
     today = date.today()
@@ -32,13 +74,19 @@ async def generate_for_profile(profile_id: str) -> None:
             "description": profile_row.description or "",
         }
 
-        # Find which slots already have unconsumed playlists — skip those
+        # Expire stale unconsumed playlists (>7 days old): delete them and any
+        # still-staged songs they own, so the slot frees up with fresh content
+        # instead of accumulating zombies forever.
+        await _expire_stale_playlists(db, profile_id, today)
+
+        # Find which slots already have an unconsumed playlist — ANY date, not
+        # just today. A playlist the user hasn't touched blocks regeneration;
+        # generating 4 fresh playlists every night regardless of usage flooded
+        # the library with ~200 downloads/day.
         existing_result = await db.execute(
             select(DailyPlaylist.slot).where(
                 DailyPlaylist.profile_id == profile_id,
-                DailyPlaylist.date == today,
                 DailyPlaylist.consumed == False,
-                DailyPlaylist.paused_to_tomorrow == False,
             )
         )
         skip_slots = {row[0] for row in existing_result.all()}
@@ -187,7 +235,8 @@ async def refill_playlist(pl) -> None:
     Reliability: LLM failure → retry once → last.fm fallback → skip.
     Songs are added to JSONB before queuing so they're tracked even if queue fails.
     """
-    from sqlalchemy.orm import selectinload, flag_modified as _fm
+    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm.attributes import flag_modified as _fm
     from ..models.library import Artist, Song
     from ..models.events import RejectedSong
     from ..services import lastfm
