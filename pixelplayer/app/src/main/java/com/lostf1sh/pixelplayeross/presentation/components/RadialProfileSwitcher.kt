@@ -69,6 +69,9 @@ object RadialSwitcherController {
     fun open(anchorInRoot: Offset) {
         anchor.value = anchorInRoot
         pointer.value = anchorInRoot
+        // Reset the tick BEFORE opening — a stale tick from the previous use
+        // would make the overlay's release effect fire instantly and close it.
+        releaseTick.value = 0L
         isOpen.value = true
     }
 
@@ -213,8 +216,11 @@ private fun HubRing(anchor: Offset) {
                 )
             }
             .size(ringRadius * 2)
-            .scale(scale.value)
-            .alpha(alpha.value)
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+                this.alpha = alpha.value
+            }
             .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape),
     )
 }
@@ -245,10 +251,6 @@ private fun ProfileNodeView(
         label = "hover",
     )
 
-    val p = progress.value
-    val cx = anchor.x + (node.target.x - anchor.x) * p
-    val cy = anchor.y + (node.target.y - anchor.y) * p
-
     val surface = MaterialTheme.colorScheme.surface
     val primary = MaterialTheme.colorScheme.primary
     val dotColor = profileColor(node.profile, isDark)
@@ -256,15 +258,22 @@ private fun ProfileNodeView(
     Box(
         modifier = Modifier
             .offset {
+                // Read the spring inside the lambda: position updates run in the
+                // layout phase only — no per-frame recomposition (jank source).
+                val p = progress.value
+                val cx = anchor.x + (node.target.x - anchor.x) * p
+                val cy = anchor.y + (node.target.y - anchor.y) * p
                 IntOffset(
                     (cx - nodeRadiusPx).roundToInt(),
                     (cy - nodeRadiusPx).roundToInt(),
                 )
             }
             .size(NodeRadius * 2)
-            .scale(hoverScale)
-            .alpha(p.coerceIn(0f, 1f))
             .graphicsLayer {
+                val p = progress.value.coerceIn(0f, 1f)
+                alpha = p
+                scaleX = hoverScale
+                scaleY = hoverScale
                 shadowElevation = if (isHovered) 24f else 8f
                 shape = CircleShape
             }
