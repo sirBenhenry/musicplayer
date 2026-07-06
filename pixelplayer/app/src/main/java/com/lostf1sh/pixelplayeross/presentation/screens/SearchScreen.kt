@@ -36,6 +36,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.TravelExplore
+import com.lostf1sh.pixelplayeross.presentation.navigation.SearchTabMode
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ColorScheme
@@ -227,6 +229,14 @@ fun SearchScreen(
         }
     }
 
+    if (SearchTabMode.online) {
+        BackendSearchScreen(
+            onBackClick = { SearchTabMode.set(false) },
+            embedded = true,
+        )
+        return
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -323,6 +333,20 @@ fun SearchScreen(
                             inputFieldColors = searchBarInputFieldColors
                         ),
                         content = {}
+                    )
+                }
+
+                FilledIconButton(
+                    modifier = Modifier.padding(bottom = 2.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    ),
+                    onClick = { SearchTabMode.set(true) }
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.TravelExplore,
+                        contentDescription = "Find New Music"
                     )
                 }
 

@@ -31,6 +31,7 @@ import com.lostf1sh.pixelplayeross.data.preferences.NavBarStyle
 import com.lostf1sh.pixelplayeross.presentation.components.scoped.CustomNavigationBarItem
 import com.lostf1sh.pixelplayeross.presentation.components.scoped.RadialGestureHooks
 import com.lostf1sh.pixelplayeross.presentation.navigation.Screen
+import com.lostf1sh.pixelplayeross.presentation.navigation.SearchTabMode
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -171,26 +172,27 @@ private fun PlayerInternalNavigationItemsRow(
                     val isAlreadySelected = latestCurrentRoute == itemRoute
 
                     if (isSearchTab) {
+                        if (isAlreadySelected) {
+                            // Re-tap while on Search flips library ↔ Find New Music.
+                            lastSearchTapTimestamp = 0L
+                            SearchTabMode.toggle()
+                            return@click
+                        }
+
                         val now = SystemClock.elapsedRealtime()
                         val isDoubleTap = now - lastSearchTapTimestamp <= 350L
                         lastSearchTapTimestamp = now
 
-                        if (!isAlreadySelected) {
-                            if (!navController.navigateToTopLevelSafely(itemRoute)) {
-                                lastSearchTapTimestamp = 0L
-                                return@click
-                            }
+                        if (!navController.navigateToTopLevelSafely(itemRoute)) {
+                            lastSearchTapTimestamp = 0L
+                            return@click
                         }
 
                         if (isDoubleTap) {
                             lastSearchTapTimestamp = 0L
-                            if (isAlreadySelected) {
+                            scope.launch {
+                                delay(160L)
                                 latestOnSearchIconDoubleTap()
-                            } else {
-                                scope.launch {
-                                    delay(160L)
-                                    latestOnSearchIconDoubleTap()
-                                }
                             }
                         }
                     } else if (!isAlreadySelected) {

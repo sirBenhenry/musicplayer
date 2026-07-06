@@ -49,10 +49,14 @@ import racra.compose.smooth_corner_rect_library.AbsoluteSmoothCornerShape
 /**
  * "Find new music" — searches MusicBrainz (tracks) and Lidarr (artists) via
  * the backend and queues downloads / discography imports.
+ *
+ * [embedded] = hosted inside the Search tab: the back arrow becomes a
+ * Library/Find-New mode switch (onBackClick returns to library search).
  */
 @Composable
 fun BackendSearchScreen(
     onBackClick: () -> Unit,
+    embedded: Boolean = false,
     viewModel: BackendSearchViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -62,20 +66,41 @@ fun BackendSearchScreen(
             .fillMaxSize()
             .statusBarsPadding()
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-        ) {
-            IconButton(onClick = onBackClick) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
+        if (embedded) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
+                FilterChip(
+                    selected = false,
+                    onClick = onBackClick,
+                    label = { Text("Library") },
+                )
+                FilterChip(
+                    selected = true,
+                    onClick = {},
+                    label = { Text("Find New Music") },
+                )
             }
-            Text(
-                text = "Find New Music",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-            )
+        } else {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+            ) {
+                IconButton(onClick = onBackClick) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
+                }
+                Text(
+                    text = "Find New Music",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
         }
 
         OutlinedTextField(
