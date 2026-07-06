@@ -85,13 +85,20 @@ Progress 2026-07-06 morning session (machine back up):
   mapping inside MusicService queue-end; native shuffle suffices short-term);
   backend-side: mirror UserPlaylists→Navidrome playlists on import
 
-WHEN SERVER IS BACK (blocked on VPN adapter to 10.1.8.0/24):
-1. Deploy backend/app/api/auth.py + app/core/config.py (Portainer patch + restart)
-2. Check nightly generation ran on clean library (daily_playlists table + logs)
-3. Sideload APK → login (admin/musicapp123 @ http://10.1.8.4:8001) → verify:
-   Navidrome auto-config, library sync, profile chips, daily slots appear,
-   play slot, skip one song + finish one song → check song_events on backend
-4. Then: rebrand/version bump + release build + GitHub release v2.0.0
+RELEASED 2026-07-06 09:00 — v2.0.0 live:
+- Server reachable via Tailscale: 100.92.64.70 (10.1.8.x route dead; OpenVPN
+  adapter not connected — all tooling switched to Tailscale IP)
+- Deployed: auth.py (client-config), config.py (NAVIDROME_PUBLIC_URL=tailscale),
+  full discovery/ package (nightly had failed: container generators lacked the
+  `candidates` kwarg — pipeline.py was deployed without its sibling refactor)
+- Manual generation running: playlists + downloads flowing (verified live)
+- Committed ae72d26 (backend overhaul + vendored fork, upstream e4537bf) + pushed
+- gh release v2.0.0 with signed app-release.apk (45MB); keystore
+  pixelplayer/release.jks + keystore.properties git-ignored, backed up in
+  ~/.claude/projects/-home-ben-cliwrk-prj-musicplayer/
+- NEXT: user sideloads + live-tests (login, auto-config, slots, keep/skip →
+  tonight's EOD). Then post-v2.0 backlog: auto-radio hook, playlist mirroring,
+  orphan-file cleanup on soulseek timeout, api/admin.py create_task→spawn
 
 Next steps (FRONTEND_PLAN.md Step 3, continue at #4):
 1. `./gradlew :app:compileDebugKotlin` — verify the 3 new files compile (check

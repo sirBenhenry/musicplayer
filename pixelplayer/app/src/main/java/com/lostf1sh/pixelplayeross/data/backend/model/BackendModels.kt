@@ -26,6 +26,9 @@ data class DailySong(
     val navidromeId: String?,
     val title: String,
     val artist: String,
+    val durationSec: Int?,
+    /** 'keep' | 'delete' | null — EOD flag from listen-through/skip events. */
+    val flag: String?,
 )
 
 /** One of the 4 daily discovery slots (close / broader / genre / artist). */
@@ -35,6 +38,7 @@ data class DailyPlaylist(
     val slot: String,
     val date: String,
     val consumed: Boolean,
+    val pausedToTomorrow: Boolean,
     val genreName: String?,
     val artistOfDay: String?,
     val songs: List<DailySong>,

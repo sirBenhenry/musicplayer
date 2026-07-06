@@ -57,6 +57,7 @@ sealed class Screen(val route: String) {
     object BackendDownloads : Screen("backend_downloads")
     object BackendNotifications : Screen("backend_notifications")
     object BackendSearch : Screen("backend_search")
+    object BackendProfiles : Screen("backend_profiles")
     object DailySlot : Screen("daily_slot/{playlistId}") {
         fun createRoute(playlistId: String) = "daily_slot/$playlistId"
     }

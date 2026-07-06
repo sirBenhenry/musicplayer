@@ -1,5 +1,6 @@
 package com.lostf1sh.pixelplayeross.presentation.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -116,12 +117,21 @@ fun BackendDownloadsScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(uiState.jobs, key = { it.id }) { job ->
+                val order = listOf("downloading", "failed", "exhausted", "queued", "completed")
+                val sorted = uiState.jobs.sortedBy { j ->
+                    if (j.reviewStatus == "pending_review" || j.reviewStatus == "bad_quality") -1
+                    else order.indexOf(j.status).let { if (it < 0) order.size else it }
+                }
+                items(sorted, key = { it.id }) { job ->
                     DownloadJobCard(
                         job = job,
                         isBusy = job.id in uiState.busyJobIds,
+                        isExpanded = uiState.expandedJobId == job.id,
+                        pipelineLog = uiState.pipelineLogs[job.id],
                         onRetry = { viewModel.retry(job.id) },
                         onCancel = { viewModel.cancel(job.id) },
+                        onReview = { action -> viewModel.review(job.id, action) },
+                        onToggleExpand = { viewModel.toggleExpand(job.id) },
                     )
                 }
             }
@@ -133,8 +143,12 @@ fun BackendDownloadsScreen(
 private fun DownloadJobCard(
     job: BackendDownloadJob,
     isBusy: Boolean,
+    isExpanded: Boolean,
+    pipelineLog: List<String>?,
     onRetry: () -> Unit,
     onCancel: () -> Unit,
+    onReview: (String) -> Unit,
+    onToggleExpand: () -> Unit,
 ) {
     val (icon, tint) = when (job.status) {
         "completed" -> Icons.Rounded.CheckCircle to Color(0xFF2E7D32)
@@ -143,12 +157,20 @@ private fun DownloadJobCard(
         else -> Icons.Rounded.ErrorOutline to MaterialTheme.colorScheme.error
     }
 
+    val needsReview = job.reviewStatus == "pending_review" || job.reviewStatus == "bad_quality"
+
     Card(
         shape = AbsoluteSmoothCornerShape(18.dp, 60),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        colors = CardDefaults.cardColors(
+            containerColor = if (needsReview) MaterialTheme.colorScheme.surfaceContainerHigh
+            else MaterialTheme.colorScheme.surfaceContainer
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggleExpand),
     ) {
+      Column {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -193,5 +215,39 @@ private fun DownloadJobCard(
                 }
             }
         }
+
+        if (needsReview && !isBusy) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 14.dp, end = 14.dp, bottom = 10.dp),
+            ) {
+                androidx.compose.material3.TextButton(onClick = { onReview("confirm") }) { Text("Looks right") }
+                androidx.compose.material3.TextButton(onClick = { onReview("wrong_song") }) { Text("Wrong song") }
+                androidx.compose.material3.TextButton(onClick = { onReview("bad_quality") }) { Text("Bad quality") }
+            }
+        }
+
+        if (isExpanded) {
+            Column(modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp)) {
+                if (pipelineLog == null) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else if (pipelineLog.isEmpty()) {
+                    Text("No pipeline log.", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    pipelineLog.forEach { line ->
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+      }
     }
 }

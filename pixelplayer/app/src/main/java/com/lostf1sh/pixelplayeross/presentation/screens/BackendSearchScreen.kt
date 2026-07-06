@@ -105,6 +105,30 @@ fun BackendSearchScreen(
             )
         }
 
+        // Spotify link pasted? Offer a one-tap playlist import.
+        if (uiState.query.contains("open.spotify.com/")) {
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.material3.Button(
+                onClick = { viewModel.importSpotify(uiState.query) },
+                enabled = !uiState.spotifyImporting,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            ) {
+                if (uiState.spotifyImporting) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text("Import Spotify playlist (to active profile)")
+            }
+        }
+        uiState.spotifyResult?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
+
         if (uiState.isSearching) {
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(modifier = Modifier.size(28.dp))

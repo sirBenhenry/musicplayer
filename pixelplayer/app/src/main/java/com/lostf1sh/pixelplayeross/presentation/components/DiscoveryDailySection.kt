@@ -19,12 +19,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -58,19 +60,43 @@ fun DiscoveryDailySection(
     onSelectProfile: (String) -> Unit,
     onOpenSlot: (ResolvedDailyPlaylist) -> Unit,
     onPlaySlot: (ResolvedDailyPlaylist) -> Unit,
+    onManageProfiles: () -> Unit = {},
 ) {
+    val activeProfile = profiles.firstOrNull { it.id == activeProfileId }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
     ) {
         Spacer(Modifier.height(16.dp))
-        Text(
-            text = "Discovery",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "DAILY DISCOVERY",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = buildString {
+                        activeProfile?.glyph?.takeIf { it.isNotBlank() }?.let { append(it).append(' ') }
+                        append(activeProfile?.name ?: "No profile")
+                    },
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onManageProfiles) {
+                Icon(
+                    Icons.Rounded.Tune,
+                    contentDescription = "Manage profiles",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Spacer(Modifier.height(10.dp))
 
         ProfileChipsRow(

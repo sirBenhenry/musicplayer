@@ -136,6 +136,39 @@ class BackendApiService @Inject constructor(
         }
     }
 
+    suspend fun createProfile(name: String): BackendProfile {
+        val body = JSONObject().put("name", name).put("daily_auto_generate", true)
+        val o = JSONObject(postJson("/profiles", body))
+        return BackendProfile(
+            id = o.getString("id"), name = o.getString("name"),
+            glyph = o.optStringOrNull("glyph"),
+            hue = if (o.isNull("hue")) null else o.optInt("hue"),
+            description = o.optStringOrNull("description"),
+            isCatchall = o.optBoolean("is_catchall"),
+            dailyAutoGenerate = o.optBoolean("daily_auto_generate"),
+        )
+    }
+
+    suspend fun renameProfile(profile: BackendProfile, newName: String) {
+        // PUT expects the full ProfileIn shape — resend existing fields.
+        val body = JSONObject()
+            .put("name", newName)
+            .put("description", profile.description ?: JSONObject.NULL)
+            .put("glyph", profile.glyph ?: JSONObject.NULL)
+            .put("hue", profile.hue ?: JSONObject.NULL)
+            .put("is_catchall", profile.isCatchall)
+            .put("daily_auto_generate", profile.dailyAutoGenerate)
+        execute(
+            authedRequest("/profiles/${profile.id}")
+                .put(body.toString().toRequestBody(JSON))
+                .build()
+        )
+    }
+
+    suspend fun deleteProfile(profileId: String) {
+        execute(authedRequest("/profiles/$profileId").delete().build())
+    }
+
     // ─── Daily playlists ─────────────────────────────────────────────────
 
     suspend fun getToday(profileId: String?): List<DailyPlaylist> {
@@ -146,6 +179,9 @@ class BackendApiService @Inject constructor(
 
     suspend fun getDailyPlaylist(playlistId: String): DailyPlaylist =
         parseDailyPlaylist(JSONObject(getJson("/discovery/playlists/$playlistId")))
+
+    suspend fun pauseDailyPlaylist(playlistId: String) =
+        postJson("/discovery/playlists/$playlistId/pause")
 
     private fun parseDailyPlaylist(o: JSONObject): DailyPlaylist {
         val rawSongs = o.optJSONArray("songs") ?: JSONArray()
@@ -163,6 +199,8 @@ class BackendApiService @Inject constructor(
                         navidromeId = s.optStringOrNull("navidrome_id"),
                         title = s.optString("title"),
                         artist = s.optString("artist"),
+                        durationSec = if (s.isNull("duration_sec")) null else s.optInt("duration_sec"),
+                        flag = s.optStringOrNull("flag"),
                     )
                 )
             }
@@ -173,6 +211,7 @@ class BackendApiService @Inject constructor(
             slot = o.getString("slot"),
             date = o.optString("date"),
             consumed = o.optBoolean("consumed"),
+            pausedToTomorrow = o.optBoolean("paused_to_tomorrow"),
             genreName = genreName,
             artistOfDay = artistOfDay,
             songs = songs,
@@ -233,6 +272,31 @@ class BackendApiService @Inject constructor(
     suspend fun retryDownload(jobId: String) = postJson("/downloads/$jobId/retry")
 
     suspend fun cancelDownload(jobId: String) = postJson("/downloads/$jobId/cancel")
+
+    suspend fun reviewDownload(jobId: String, action: String) =
+        postJson("/downloads/$jobId/review", JSONObject().put("action", action))
+
+    /** Pipeline step log — list of {ts, step, status, message}. */
+    suspend fun getDownloadPipeline(jobId: String): List<String> {
+        val o = JSONObject(getJson("/downloads/$jobId/pipeline"))
+        val arr = o.optJSONArray("pipeline_log") ?: JSONArray()
+        return (0 until arr.length()).map { i ->
+            val e = arr.getJSONObject(i)
+            val ts = e.optString("ts").let { if (it.length >= 19) it.substring(11, 19) else it }
+            "$ts  ${e.optString("step")}  ${e.optString("message")}"
+        }
+    }
+
+    /** Spotify playlist/album import → creates UserPlaylist + queues downloads. */
+    suspend fun importSpotifyPlaylist(url: String, profileId: String?): String {
+        val body = JSONObject().put("url", url)
+        profileId?.let { body.put("profile_id", it) }
+        val o = JSONObject(postJson("/playlists/import-spotify", body))
+        return "${o.optString("name")}: ${o.optInt("track_count")} tracks queued"
+    }
+
+    /** Raw system-status JSON (services/storage/library/downloads). */
+    suspend fun getSystemStatus(): JSONObject = JSONObject(getJson("/admin/system-status"))
 
     // ─── Search new music ────────────────────────────────────────────────
 

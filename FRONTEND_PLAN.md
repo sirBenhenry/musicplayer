@@ -100,3 +100,65 @@ Setup: one screen collects backend URL + credentials; backend serves Navidrome c
 9. Updater port. 10. Release build, sideload, GitHub release v2.0.0.
 
 Each step: compile + install on device before next.
+
+---
+
+# Audit v2 (2026-07-06) — post-first-install gap list
+
+User feedback: profile switching invisible, phone-local music showing, de-brand needed,
+old-app features missing. Full re-read of `mobile/` (10.5k lines) + backend API surface.
+
+## Root causes of reported issues
+1. **Local music appears**: PixelPlayer scans MediaStore by default. Native
+   `StorageFilter.ONLINE` exists (persisted via `saveLastStorageFilter`) — never set.
+   Also Home's local "Your Mix" collage + local DailyMix render from phone files.
+2. **Profile switching unclear**: chips exist in DiscoveryDailySection but no
+   "current profile" identity anywhere; local DailyMix sections drown the discovery
+   section; no profile management UI at all (old app: profiles.tsx CRUD + ProfileMenu).
+
+## Fix list v2.1 (all in this pass)
+- [x] audit
+- [x] SERVER-ONLY: set StorageFilter.ONLINE (persist) after backend login; hide local
+      Your-Mix collage + local DailyMix sections whenever backend connected
+- [x] PROFILE UX: discovery header shows active profile (glyph+name, hue accent);
+      chips relabeled; gear → new BackendProfilesScreen (create/rename/delete via
+      new POST/PUT/DELETE client methods; guard catchall)
+- [x] DE-BRAND: app label → "Music" (old app name), remove F-Droid link/badge rows in
+      About, source link → sirBenhenry/musicplayer, keep upstream GPL attribution
+- [x] DailySlotScreen v2: pause-to-tomorrow, keep/delete flag badges (parse `flag`
+      from enriched songs), duration display, artist-of-day "Add artist" button
+- [x] Downloads v2: review actions (confirm / wrong_song / bad_quality) for
+      pending_review + bad_quality jobs; expandable pipeline log (GET /downloads/{id}/pipeline)
+- [x] Notifications: "Scheduled deletions" section (GET /deletion/pending + rescue)
+- [x] Find New Music: Spotify playlist import (POST /playlists/import-spotify)
+- [x] Backend status card (GET /admin/system-status): services health dots, NAS
+      storage bar, library + download counters — on BackendLoginScreen connected view
+
+## Feature-parity table vs old app (final disposition)
+| Old-app feature | v2.1 state |
+|---|---|
+| Login / server URL | BackendLoginScreen ✓ |
+| Profile switcher (radial) + ProfileMenu | chips + header identity + BackendProfilesScreen (this pass) |
+| Profiles CRUD | BackendProfilesScreen (this pass) |
+| Home: 4 daily slot cards | DiscoveryDailySection ✓ |
+| Home: genre/artist prompt cards | Notifications screen ✓ (also badge later) |
+| Home: new-release banner | DEFERRED (needs lidarr webhook artist flag surface) |
+| Playlist detail: play/shuffle/hints | DailySlotScreen ✓ |
+| Playlist detail: pause-to-tomorrow, flags, add-artist | this pass |
+| Library songs/artists/playlists + profile filter | native PixelPlayer library (ONLINE filter) — per-profile library view DEFERRED (needs songs profile-map join) |
+| Song actions: assign profile / delete / add-to-playlist | native playlist add ✓; profile assign + server delete DEFERRED |
+| Search library | native ✓ |
+| Search new music + download w/ profile | BackendSearchScreen ✓ (downloads to active profile) |
+| Artist detail: follow/add/unfollow/download-all | partial via search screen; artist-detail buttons DEFERRED |
+| Downloads: status groups, retry/cancel/review/pipeline log | this pass completes |
+| Notifications center + dismiss-all + prompts | ✓ + deletions section this pass |
+| Deletion rescue | this pass (in Notifications) |
+| History + redownload | DEFERRED |
+| Spotify import | this pass |
+| Import songs/setup JSON, export/apply library | DROPPED from app (MCP/Claude Desktop path) |
+| System status | this pass |
+| Audio analysis monitor | DEFERRED |
+| Device logs | DROPPED (adb) |
+| In-app updater | ✓ |
+| Auto-radio | DEFERRED (post-v2, needs queue-end hook) |
+| Theme (terracotta/sage) | DROPPED — Material You covers it |

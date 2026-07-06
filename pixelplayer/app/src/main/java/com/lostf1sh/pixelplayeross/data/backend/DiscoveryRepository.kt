@@ -32,6 +32,8 @@ class DiscoveryRepository @Inject constructor(
         val backendSongId: String?, // backend UUID, needed for playback event reporting
         val title: String,
         val artist: String,
+        val durationSec: Int?,
+        val flag: String?,         // 'keep' | 'delete' | null
     )
 
     data class ResolvedDailyPlaylist(
@@ -68,6 +70,8 @@ class DiscoveryRepository @Inject constructor(
                                 backendSongId = s.id,
                                 title = s.title,
                                 artist = s.artist,
+                                durationSec = s.durationSec,
+                                flag = s.flag,
                             )
                         },
                     )
@@ -81,6 +85,11 @@ class DiscoveryRepository @Inject constructor(
             _isRefreshing.value = false
         }
     }
+
+    suspend fun pausePlaylist(playlistId: String): Boolean =
+        runCatching { backendRepository.withAuthRetry { api.pauseDailyPlaylist(playlistId) } }
+            .onFailure { Timber.w(it, "pausePlaylist failed") }
+            .isSuccess
 
     fun playlistById(playlistId: String): ResolvedDailyPlaylist? =
         _todayFlow.value.firstOrNull { it.playlist.id == playlistId }

@@ -81,6 +81,11 @@ fun BackendNotificationsScreen(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f),
             )
+            if (uiState.notifications.isNotEmpty()) {
+                androidx.compose.material3.TextButton(onClick = { viewModel.dismissAll() }) {
+                    Text("Dismiss all")
+                }
+            }
             IconButton(onClick = { viewModel.refresh() }) {
                 Icon(Icons.Rounded.Refresh, contentDescription = "Refresh")
             }
@@ -91,7 +96,7 @@ fun BackendNotificationsScreen(
                 Modifier.fillMaxSize(), contentAlignment = Alignment.Center,
             ) { CircularProgressIndicator() }
 
-            uiState.notifications.isEmpty() -> Box(
+            uiState.notifications.isEmpty() && uiState.pendingDeletions.isEmpty() -> Box(
                 Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -117,6 +122,53 @@ fun BackendNotificationsScreen(
                         onDecline = { viewModel.decline(notif.id) },
                         onDismiss = { viewModel.dismiss(notif.id) },
                     )
+                }
+
+                if (uiState.pendingDeletions.isNotEmpty()) {
+                    item(key = "deletions_header") {
+                        Text(
+                            text = "Scheduled for deletion tonight",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
+                        )
+                    }
+                    items(uiState.pendingDeletions, key = { "del_" + it.songId }) { pd ->
+                        Card(
+                            shape = AbsoluteSmoothCornerShape(16.dp, 60),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        pd.title,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    )
+                                    pd.artist?.let {
+                                        Text(
+                                            it, style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                if (pd.songId in uiState.busyIds) {
+                                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                } else {
+                                    androidx.compose.material3.TextButton(onClick = { viewModel.rescue(pd.songId) }) {
+                                        Text("Rescue")
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

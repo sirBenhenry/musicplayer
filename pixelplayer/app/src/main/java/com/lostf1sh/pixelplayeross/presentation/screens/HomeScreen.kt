@@ -347,7 +347,7 @@ fun HomeScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                if (yourMixSongs.isEmpty()) {
+                if (yourMixSongs.isEmpty() && !backendConnected) {
                     item(
                         key = "your_mix_placeholder",
                         contentType = "your_mix_placeholder"
@@ -364,7 +364,7 @@ fun HomeScreen(
                             )
                         }
                     }
-                } else {
+                } else if (!backendConnected) {
                     item(
                         key = "your_mix_header",
                         contentType = "your_mix_header"
@@ -387,8 +387,8 @@ fun HomeScreen(
                     }
                 }
 
-                // Collage
-                if (yourMixSongs.isNotEmpty()) {
+                // Collage — local-library mix; hidden in server-only (backend) mode
+                if (yourMixSongs.isNotEmpty() && !backendConnected) {
                     item(
                         key = "album_art_collage",
                         contentType = "album_art_collage"
@@ -438,6 +438,9 @@ fun HomeScreen(
                             onOpenSlot = { slot ->
                                 navController.navigateSafely(Screen.DailySlot.createRoute(slot.playlist.id))
                             },
+                            onManageProfiles = {
+                                navController.navigateSafely(Screen.BackendProfiles.route)
+                            },
                             onPlaySlot = { slot ->
                                 val playable = slot.playableSongs
                                 if (playable.isNotEmpty()) {
@@ -453,8 +456,8 @@ fun HomeScreen(
                     }
                 }
 
-                // Daily Mix (local engagement-based fallback; hidden when backend slots exist)
-                if (dailyMixSongs.isNotEmpty() && dailySlots.isEmpty()) {
+                // Daily Mix (local engagement-based fallback; hidden whenever backend is connected)
+                if (dailyMixSongs.isNotEmpty() && !backendConnected) {
                     item(
                         key = "daily_mix_section",
                         contentType = "daily_mix_section"

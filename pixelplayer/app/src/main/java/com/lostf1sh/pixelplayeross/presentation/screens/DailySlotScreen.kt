@@ -21,18 +21,26 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.HourglassEmpty
+import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,6 +95,10 @@ fun DailySlotScreen(
         }
         return
     }
+
+    var paused by remember(slot.playlist.id) { mutableStateOf(slot.playlist.pausedToTomorrow) }
+    var pausing by remember { mutableStateOf(false) }
+    var artistState by remember(slot.playlist.id) { mutableStateOf("idle") } // idle|busy|done|failed
 
     val playable = remember(slot) { slot.playableSongs.toImmutableList() }
     val queueName = remember(slot) {
@@ -171,6 +183,63 @@ fun DailySlotScreen(
                         Text("Shuffle", fontWeight = FontWeight.SemiBold)
                     }
                 }
+
+                // Artist-of-the-day: quick add to library / Lidarr
+                if (slot.playlist.slot == "artist" && slot.playlist.artistOfDay != null) {
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = {
+                            if (artistState == "idle" || artistState == "failed") {
+                                artistState = "busy"
+                                discoveryViewModel.addArtistOfDay(slot.playlist.artistOfDay!!) { ok ->
+                                    artistState = if (ok) "done" else "failed"
+                                }
+                            }
+                        },
+                        enabled = artistState != "busy" && artistState != "done",
+                        shape = AbsoluteSmoothCornerShape(16.dp, 60),
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                    ) {
+                        when (artistState) {
+                            "busy" -> CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            "done" -> Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                            else -> Icon(Icons.Rounded.PersonAdd, contentDescription = null, modifier = Modifier.size(18.dp))
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            when (artistState) {
+                                "done" -> "${slot.playlist.artistOfDay} added"
+                                "failed" -> "Failed — tap to retry"
+                                else -> "Add ${slot.playlist.artistOfDay} to library"
+                            }
+                        )
+                    }
+                }
+
+                // Pause to tomorrow: keep this playlist alive instead of tonight's EOD
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = {
+                        if (!paused && !pausing) {
+                            pausing = true
+                            discoveryViewModel.pausePlaylist(slot.playlist.id) { ok ->
+                                pausing = false
+                                if (ok) paused = true
+                            }
+                        }
+                    },
+                    enabled = !paused && !pausing,
+                    shape = AbsoluteSmoothCornerShape(16.dp, 60),
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                ) {
+                    if (pausing) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Rounded.Schedule, contentDescription = null, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (paused) "Paused — saved for tomorrow" else "No time today? Pause to tomorrow")
+                }
                 Spacer(Modifier.height(16.dp))
             }
         }
@@ -232,6 +301,25 @@ fun DailySlotScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                when (entry.flag) {
+                    "keep" -> Icon(
+                        Icons.Rounded.Check, contentDescription = "Kept",
+                        tint = androidx.compose.ui.graphics.Color(0xFF2E7D32),
+                        modifier = Modifier.size(18.dp),
+                    )
+                    "delete" -> Icon(
+                        Icons.Rounded.Close, contentDescription = "Marked for deletion",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    else -> entry.durationSec?.takeIf { it > 0 && song != null }?.let { d ->
+                        Text(
+                            text = "%d:%02d".format(d / 60, d % 60),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }

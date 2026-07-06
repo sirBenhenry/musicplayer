@@ -6,6 +6,7 @@ import com.lostf1sh.pixelplayeross.data.backend.BackendApiService
 import com.lostf1sh.pixelplayeross.data.backend.BackendRepository
 import com.lostf1sh.pixelplayeross.data.backend.model.BackendNotification
 import com.lostf1sh.pixelplayeross.data.backend.model.BackendProfile
+import com.lostf1sh.pixelplayeross.data.backend.model.PendingDeletionItem
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +18,7 @@ import javax.inject.Inject
 
 data class BackendNotificationsUiState(
     val notifications: List<BackendNotification> = emptyList(),
+    val pendingDeletions: List<PendingDeletionItem> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
     val busyIds: Set<String> = emptySet(),
@@ -49,6 +51,9 @@ class BackendNotificationsViewModel @Inject constructor(
                     Timber.w(e, "notifications refresh failed")
                     _uiState.update { it.copy(isLoading = false, error = e.message) }
                 }
+            runCatching { backendRepository.withAuthRetry { api.getPendingDeletions() } }
+                .onSuccess { dels -> _uiState.update { it.copy(pendingDeletions = dels) } }
+                .onFailure { Timber.w(it, "pending deletions fetch failed") }
         }
     }
 
@@ -61,6 +66,10 @@ class BackendNotificationsViewModel @Inject constructor(
     fun decline(id: String) = busyAction(id) {
         api.notificationAction(id, accept = false)
     }
+
+    fun rescue(songId: String) = busyAction(songId) { api.rescueSong(songId) }
+
+    fun dismissAll() = busyAction("__all__") { api.dismissAllNotifications() }
 
     private fun busyAction(id: String, block: suspend () -> Unit) {
         if (id in _uiState.value.busyIds) return

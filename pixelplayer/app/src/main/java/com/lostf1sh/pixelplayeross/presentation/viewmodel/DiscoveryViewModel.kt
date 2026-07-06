@@ -2,6 +2,7 @@ package com.lostf1sh.pixelplayeross.presentation.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.lostf1sh.pixelplayeross.data.backend.BackendApiService
 import com.lostf1sh.pixelplayeross.data.backend.BackendRepository
 import com.lostf1sh.pixelplayeross.data.backend.DailyPlaybackReporter
 import com.lostf1sh.pixelplayeross.data.backend.DiscoveryRepository
@@ -25,6 +26,7 @@ class DiscoveryViewModel @Inject constructor(
     private val backendRepository: BackendRepository,
     private val discoveryRepository: DiscoveryRepository,
     private val dailyPlaybackReporter: DailyPlaybackReporter,
+    private val api: BackendApiService,
 ) : ViewModel() {
 
     val isBackendConnected: StateFlow<Boolean> = backendRepository.isLoggedInFlow
@@ -62,6 +64,24 @@ class DiscoveryViewModel @Inject constructor(
 
     fun selectProfile(profileId: String) {
         backendRepository.setActiveProfile(profileId)
+    }
+
+    fun pausePlaylist(playlistId: String, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch { onDone(discoveryRepository.pausePlaylist(playlistId)) }
+    }
+
+    /** Artist-of-the-day: resolve via Lidarr search, add to library (no follow). */
+    fun addArtistOfDay(artistName: String, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = runCatching {
+                backendRepository.withAuthRetry {
+                    val match = api.searchArtists(artistName).firstOrNull()
+                        ?: error("artist not found")
+                    api.importArtist(match.mbid, match.name, follow = false, downloadRecordings = false)
+                }
+            }.isSuccess
+            onDone(ok)
+        }
     }
 
     /**

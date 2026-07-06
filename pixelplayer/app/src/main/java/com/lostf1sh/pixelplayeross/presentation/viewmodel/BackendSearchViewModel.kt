@@ -28,6 +28,8 @@ data class BackendSearchUiState(
     val error: String? = null,
     /** keys: "artist — title" for tracks, mbid for artists */
     val requested: Set<String> = emptySet(),
+    val spotifyImporting: Boolean = false,
+    val spotifyResult: String? = null,
 )
 
 /** Online search against the backend: MusicBrainz tracks + Lidarr artists. */
@@ -96,6 +98,28 @@ class BackendSearchViewModel @Inject constructor(
             }.onSuccess {
                 _uiState.update { it.copy(requested = it.requested + key) }
             }.onFailure { Timber.w(it, "track download request failed") }
+        }
+    }
+
+    fun importSpotify(url: String) {
+        if (_uiState.value.spotifyImporting || url.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(spotifyImporting = true, spotifyResult = null) }
+            runCatching {
+                backendRepository.withAuthRetry {
+                    api.importSpotifyPlaylist(
+                        url.trim(),
+                        backendRepository.activeProfileIdFlow.value
+                            ?.takeIf { backendRepository.activeProfile?.isCatchall != true },
+                    )
+                }
+            }.fold(
+                onSuccess = { msg -> _uiState.update { it.copy(spotifyImporting = false, spotifyResult = msg) } },
+                onFailure = { e ->
+                    Timber.w(e, "spotify import failed")
+                    _uiState.update { it.copy(spotifyImporting = false, spotifyResult = "Import failed: ${e.message}") }
+                },
+            )
         }
     }
 

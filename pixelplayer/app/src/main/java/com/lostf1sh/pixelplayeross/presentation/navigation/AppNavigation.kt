@@ -260,6 +260,19 @@ fun AppNavigation(
                 }
             }
             composable(
+                Screen.BackendProfiles.route,
+                enterTransition = { enterTransition() },
+                exitTransition = { exitTransition() },
+                popEnterTransition = { popEnterTransition() },
+                popExitTransition = { popExitTransition() },
+            ) {
+                ScreenWrapper(navController = navController, playerViewModel = playerViewModel) {
+                    com.lostf1sh.pixelplayeross.presentation.screens.BackendProfilesScreen(
+                        onBackClick = { navController.popBackStack() }
+                    )
+                }
+            }
+            composable(
                 Screen.BackendSearch.route,
                 enterTransition = { enterTransition() },
                 exitTransition = { exitTransition() },

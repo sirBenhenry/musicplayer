@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.lostf1sh.pixelplayeross.data.backend.BackendApiService
 import com.lostf1sh.pixelplayeross.data.backend.BackendRepository
 import com.lostf1sh.pixelplayeross.data.backend.model.BackendProfile
+import com.lostf1sh.pixelplayeross.data.model.StorageFilter
 import com.lostf1sh.pixelplayeross.data.navidrome.NavidromeRepository
 import timber.log.Timber
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -15,6 +16,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+data class SystemStatusRow(val label: String, val detail: String, val ok: Boolean?)
+
 data class BackendLoginUiState(
     val serverUrl: String = "",
     val username: String = "",
@@ -22,6 +25,7 @@ data class BackendLoginUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val loginSucceeded: Boolean = false,
+    val statusRows: List<SystemStatusRow> = emptyList(),
 )
 
 @HiltViewModel
@@ -29,6 +33,7 @@ class BackendAccountViewModel @Inject constructor(
     private val backendRepository: BackendRepository,
     private val backendApi: BackendApiService,
     private val navidromeRepository: NavidromeRepository,
+    private val libraryStateHolder: LibraryStateHolder,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -58,6 +63,9 @@ class BackendAccountViewModel @Inject constructor(
                 onSuccess = {
                     backendRepository.refreshProfiles()
                     autoConfigureNavidrome()
+                    // Server-only setup: this install plays from the server, not
+                    // from files on the phone — hide MediaStore music.
+                    libraryStateHolder.setStorageFilter(StorageFilter.ONLINE)
                     _uiState.update { it.copy(isLoading = false, loginSucceeded = true) }
                 },
                 onFailure = { e ->
@@ -82,6 +90,54 @@ class BackendAccountViewModel @Inject constructor(
     }
 
     fun setActiveProfile(profileId: String?) = backendRepository.setActiveProfile(profileId)
+
+    fun refreshSystemStatus() {
+        if (!backendRepository.isLoggedIn) return
+        viewModelScope.launch {
+            runCatching { backendRepository.withAuthRetry { backendApi.getSystemStatus() } }
+                .onSuccess { st ->
+                    val rows = mutableListOf<SystemStatusRow>()
+                    val services = st.optJSONArray("services")
+                    if (services != null) {
+                        for (i in 0 until services.length()) {
+                            val svc = services.getJSONObject(i)
+                            val ok = svc.optBoolean("ok")
+                            val detail = when {
+                                !ok -> svc.optString("error", "unreachable")
+                                svc.optString("name") == "qbittorrent" ->
+                                    "${svc.optInt("active_torrents")} active torrents"
+                                svc.has("version") -> "v${svc.optString("version")}"
+                                else -> "ok"
+                            }
+                            rows.add(SystemStatusRow(svc.optString("name"), detail, ok))
+                        }
+                    }
+                    st.optJSONObject("library")?.let { lib ->
+                        rows.add(SystemStatusRow(
+                            "library",
+                            "${lib.optInt("songs")} songs · ${lib.optInt("artists")} artists",
+                            null,
+                        ))
+                    }
+                    st.optJSONObject("downloads")?.let { dl ->
+                        rows.add(SystemStatusRow(
+                            "downloads",
+                            "${dl.optInt("queued")} queued · ${dl.optInt("downloading")} active · ${dl.optInt("failed")} failed",
+                            null,
+                        ))
+                    }
+                    st.optJSONObject("storage")?.let { sto ->
+                        val freeGb = sto.optLong("disk_free_bytes") / 1_073_741_824
+                        val musicGb = sto.optLong("music_bytes") / 1_073_741_824
+                        if (freeGb > 0) rows.add(SystemStatusRow(
+                            "storage", "${musicGb} GB music · ${freeGb} GB free", null,
+                        ))
+                    }
+                    _uiState.update { it.copy(statusRows = rows) }
+                }
+                .onFailure { Timber.w(it, "system status fetch failed") }
+        }
+    }
 
     fun logout() = backendRepository.logout()
 }

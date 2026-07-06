@@ -2,6 +2,7 @@ package com.lostf1sh.pixelplayeross.presentation.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,6 +57,9 @@ fun BackendLoginScreen(
 
     LaunchedEffect(uiState.loginSucceeded) {
         if (uiState.loginSucceeded) onBackClick()
+    }
+    LaunchedEffect(isLoggedIn) {
+        if (isLoggedIn) viewModel.refreshSystemStatus()
     }
 
     Column(
@@ -118,6 +122,33 @@ fun BackendLoginScreen(
                         else "${profiles.size} taste profiles",
                         style = MaterialTheme.typography.bodyMedium,
                     )
+
+                    if (uiState.statusRows.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        uiState.statusRows.forEach { row ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                when (row.ok) {
+                                    true -> Text("●", color = androidx.compose.ui.graphics.Color(0xFF4CAF50))
+                                    false -> Text("●", color = MaterialTheme.colorScheme.error)
+                                    null -> Text("○", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Spacer(Modifier.height(0.dp))
+                                Text(
+                                    "  ${row.label}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    row.detail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(4.dp))
                     Button(
                         onClick = { viewModel.logout() },

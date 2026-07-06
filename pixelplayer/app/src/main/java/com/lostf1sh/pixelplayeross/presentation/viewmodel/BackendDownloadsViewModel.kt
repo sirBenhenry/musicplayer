@@ -19,6 +19,8 @@ data class BackendDownloadsUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val busyJobIds: Set<String> = emptySet(),
+    val expandedJobId: String? = null,
+    val pipelineLogs: Map<String, List<String>> = emptyMap(),
 )
 
 @HiltViewModel
@@ -51,6 +53,27 @@ class BackendDownloadsViewModel @Inject constructor(
     fun retry(jobId: String) = jobAction(jobId) { api.retryDownload(jobId) }
 
     fun cancel(jobId: String) = jobAction(jobId) { api.cancelDownload(jobId) }
+
+    /** confirm | wrong_song | bad_quality */
+    fun review(jobId: String, action: String) = jobAction(jobId) { api.reviewDownload(jobId, action) }
+
+    fun toggleExpand(jobId: String) {
+        val current = _uiState.value
+        if (current.expandedJobId == jobId) {
+            _uiState.update { it.copy(expandedJobId = null) }
+            return
+        }
+        _uiState.update { it.copy(expandedJobId = jobId) }
+        if (jobId !in current.pipelineLogs) {
+            viewModelScope.launch {
+                runCatching { backendRepository.withAuthRetry { api.getDownloadPipeline(jobId) } }
+                    .onSuccess { log ->
+                        _uiState.update { it.copy(pipelineLogs = it.pipelineLogs + (jobId to log)) }
+                    }
+                    .onFailure { Timber.w(it, "pipeline log fetch failed") }
+            }
+        }
+    }
 
     private fun jobAction(jobId: String, block: suspend () -> Unit) {
         if (jobId in _uiState.value.busyJobIds) return
