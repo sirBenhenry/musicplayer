@@ -104,7 +104,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.runtime.derivedStateOf
@@ -2125,7 +2127,7 @@ private fun AlbumPlaceholder(
         Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
             Icon(
                 modifier = Modifier.size(86.dp),
-                painter = painterResource(R.drawable.pixelplayer_base_monochrome),
+                imageVector = Icons.Rounded.MusicNote,
                 contentDescription = null,
                 tint = onColor
             )

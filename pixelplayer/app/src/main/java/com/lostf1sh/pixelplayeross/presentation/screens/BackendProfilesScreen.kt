@@ -1,6 +1,9 @@
 package com.lostf1sh.pixelplayeross.presentation.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -38,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -45,6 +49,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lostf1sh.pixelplayeross.data.backend.model.BackendProfile
 import com.lostf1sh.pixelplayeross.presentation.components.MiniPlayerHeight
 import com.lostf1sh.pixelplayeross.presentation.viewmodel.BackendProfilesViewModel
+import androidx.compose.foundation.shape.CircleShape
+import com.lostf1sh.pixelplayeross.presentation.components.profileColor
 import racra.compose.smooth_corner_rect_library.AbsoluteSmoothCornerShape
 
 /** Taste-profile management: create, rename, delete (catchall protected). */
@@ -106,10 +112,13 @@ fun BackendProfilesScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                profile.glyph?.takeIf { it.isNotBlank() }?.let {
-                                    Text(it, style = MaterialTheme.typography.titleMedium)
-                                    Spacer(Modifier.width(6.dp))
-                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .clip(CircleShape)
+                                        .background(profileColor(profile, isSystemInDarkTheme())),
+                                )
+                                Spacer(Modifier.width(8.dp))
                                 Text(
                                     text = profile.name,
                                     style = MaterialTheme.typography.titleMedium,

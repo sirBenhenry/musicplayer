@@ -44,6 +44,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Public
@@ -434,7 +435,7 @@ private fun AboutHeroCard(
                         color = MaterialTheme.colorScheme.primaryContainer,
                     ) {
                         Icon(
-                            painter = painterResource(R.drawable.pixelplayer_base_monochrome),
+                            imageVector = Icons.Rounded.MusicNote,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.padding(10.dp).size(28.dp),

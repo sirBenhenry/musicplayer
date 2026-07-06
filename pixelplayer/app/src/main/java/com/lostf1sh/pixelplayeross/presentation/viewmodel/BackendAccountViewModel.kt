@@ -5,8 +5,14 @@ import androidx.lifecycle.viewModelScope
 import com.lostf1sh.pixelplayeross.data.backend.BackendApiService
 import com.lostf1sh.pixelplayeross.data.backend.BackendRepository
 import com.lostf1sh.pixelplayeross.data.backend.model.BackendProfile
+import android.content.Context
+import androidx.work.ExistingWorkPolicy
+import androidx.work.WorkManager
 import com.lostf1sh.pixelplayeross.data.model.StorageFilter
 import com.lostf1sh.pixelplayeross.data.navidrome.NavidromeRepository
+import com.lostf1sh.pixelplayeross.data.preferences.UserPreferencesRepository
+import com.lostf1sh.pixelplayeross.data.worker.SyncWorker
+import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +40,8 @@ class BackendAccountViewModel @Inject constructor(
     private val backendApi: BackendApiService,
     private val navidromeRepository: NavidromeRepository,
     private val libraryStateHolder: LibraryStateHolder,
+    private val userPreferencesRepository: UserPreferencesRepository,
+    @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -64,8 +72,16 @@ class BackendAccountViewModel @Inject constructor(
                     backendRepository.refreshProfiles()
                     autoConfigureNavidrome()
                     // Server-only setup: this install plays from the server, not
-                    // from files on the phone — hide MediaStore music.
+                    // from files on the phone. Persist the mode (kills MediaStore
+                    // scanning), set the runtime filter, and rebuild the local DB
+                    // so already-scanned phone files disappear too.
+                    userPreferencesRepository.setServerOnlyMode(true)
                     libraryStateHolder.setStorageFilter(StorageFilter.ONLINE)
+                    WorkManager.getInstance(appContext).enqueueUniqueWork(
+                        SyncWorker.WORK_NAME,
+                        ExistingWorkPolicy.REPLACE,
+                        SyncWorker.rebuildDatabaseWork(),
+                    )
                     _uiState.update { it.copy(isLoading = false, loginSucceeded = true) }
                 },
                 onFailure = { e ->

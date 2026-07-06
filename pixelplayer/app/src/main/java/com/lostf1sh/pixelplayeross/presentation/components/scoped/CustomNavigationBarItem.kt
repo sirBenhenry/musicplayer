@@ -11,6 +11,9 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +40,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layoutId
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -47,6 +55,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 // In a new file or alongside PlayerInternalNavigationItemsRow.kt
+
+/**
+ * Hooks for the radial profile switcher: long-press opens it at the item's
+ * root position, the same gesture's drags stream through, release commits.
+ */
+data class RadialGestureHooks(
+    val onOpen: (rootPosition: Offset) -> Unit,
+    val onMove: (rootPosition: Offset) -> Unit,
+    val onRelease: () -> Unit,
+)
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -66,6 +84,7 @@ fun RowScope.CustomNavigationBarItem(
     selectedTextColor: Color = MaterialTheme.colorScheme.onSurface,
     unselectedTextColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     indicatorColor: Color = MaterialTheme.colorScheme.secondaryContainer,
+    radialHooks: RadialGestureHooks? = null,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() }
 ) {
     // Animated colors - only recompose when 'selected' changes
@@ -100,11 +119,40 @@ fun RowScope.CustomNavigationBarItem(
     val indicatorShape = RoundedCornerShape(16.dp)
     val iconShape = RoundedCornerShape(12.dp)
 
+    // Radial switcher: capture root coords + a raw long-press-drag gesture.
+    val itemCoords = remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val radialModifier = if (radialHooks != null) {
+        Modifier
+            .onGloballyPositioned { itemCoords.value = it }
+            .pointerInput(radialHooks) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val longPress = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                    val coords = itemCoords.value ?: return@awaitEachGesture
+                    radialHooks.onOpen(coords.localToRoot(longPress.position))
+                    longPress.consume()
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == longPress.id }
+                            ?: event.changes.first()
+                        if (!change.pressed) {
+                            change.consume()
+                            radialHooks.onRelease()
+                            break
+                        }
+                        radialHooks.onMove(coords.localToRoot(change.position))
+                        change.consume()
+                    }
+                }
+            }
+    } else Modifier
+
     // Main layout
     Column(
         modifier = modifier
             .weight(1f)
             .fillMaxHeight()
+            .then(radialModifier)
             .clickable(
                 onClick = onClick,
                 enabled = enabled,

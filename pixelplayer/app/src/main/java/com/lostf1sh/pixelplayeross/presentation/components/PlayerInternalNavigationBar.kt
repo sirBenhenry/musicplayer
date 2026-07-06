@@ -29,6 +29,7 @@ import androidx.navigation.NavHostController
 import com.lostf1sh.pixelplayeross.BottomNavItem
 import com.lostf1sh.pixelplayeross.data.preferences.NavBarStyle
 import com.lostf1sh.pixelplayeross.presentation.components.scoped.CustomNavigationBarItem
+import com.lostf1sh.pixelplayeross.presentation.components.scoped.RadialGestureHooks
 import com.lostf1sh.pixelplayeross.presentation.navigation.Screen
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.delay
@@ -200,9 +201,19 @@ private fun PlayerInternalNavigationItemsRow(
                     }
                 }
             }
+            val radialHooks = if (item.screen.route == Screen.Home.route) {
+                remember {
+                    RadialGestureHooks(
+                        onOpen = { RadialSwitcherController.open(it) },
+                        onMove = { RadialSwitcherController.move(it) },
+                        onRelease = { RadialSwitcherController.release() },
+                    )
+                }
+            } else null
             CustomNavigationBarItem(
                 modifier = Modifier.weight(1f),
                 selected = isSelected,
+                radialHooks = radialHooks,
                 onClick = onClickLambda,
                 enabled = currentRoute != null,
                 compactMode = compactMode,

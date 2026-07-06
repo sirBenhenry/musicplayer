@@ -553,6 +553,9 @@ class MainActivity : ComponentActivity() {
         Box(modifier = Modifier.fillMaxSize()) {
             MainUI(playerViewModel, navController)
 
+            // Radial taste-profile switcher — hold Home tab, drag, release.
+            com.lostf1sh.pixelplayeross.presentation.components.RadialProfileOverlay()
+
             // Show the LoadingOverlay only if the conditions are met AND the delay has passed
             if (canShowLoadingIndicator) {
                 LoadingOverlay(syncProgress)

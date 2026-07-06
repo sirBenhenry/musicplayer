@@ -115,6 +115,12 @@ class MediaStoreSongRepository @Inject constructor(
         extraSelection: String? = null,
         extraSelectionArgs: Array<String>? = null
     ): List<Song> = withContext(Dispatchers.IO) {
+        // Server-only mode: the backend + Navidrome are the library; phone-local
+        // files (folders, downloads, WhatsApp audio...) must never surface.
+        if (userPreferencesRepository.serverOnlyModeFlow.first()) {
+            return@withContext emptyList()
+        }
+
         val songs = mutableListOf<Song>()
         val (baseSelection, baseSelectionArgs) = buildLocalAudioSelection(minDurationMs)
         val projection = arrayOf(

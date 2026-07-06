@@ -434,7 +434,6 @@ fun HomeScreen(
                             profiles = backendProfiles,
                             activeProfileId = backendActiveProfileId,
                             slots = dailySlots,
-                            onSelectProfile = { discoveryViewModel.selectProfile(it) },
                             onOpenSlot = { slot ->
                                 navController.navigateSafely(Screen.DailySlot.createRoute(slot.playlist.id))
                             },
@@ -451,6 +450,14 @@ fun HomeScreen(
                                         queueName = "Daily · ${slot.playlist.slot}"
                                     )
                                 }
+                            },
+                            onPlaySong = { slot, song ->
+                                discoveryViewModel.armReporting(slot)
+                                playerViewModel.playSongs(
+                                    songsToPlay = slot.playableSongs.toImmutableList(),
+                                    startSong = song,
+                                    queueName = "Daily · ${slot.playlist.slot}"
+                                )
                             }
                         )
                     }

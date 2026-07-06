@@ -162,3 +162,17 @@ old-app features missing. Full re-read of `mobile/` (10.5k lines) + backend API 
 | In-app updater | ✓ |
 | Auto-radio | DEFERRED (post-v2, needs queue-end hook) |
 | Theme (terracotta/sage) | DROPPED — Material You covers it |
+
+## v2.3 UX integration pass (2026-07-06 late morning)
+Design rule applied: discovery UI rebuilt from PixelPlayer's own visual recipes, not old-app ports.
+- Close Match = Daily-Mix card recipe: 80dp primary→tertiary gradient header, threeShapeSwitch
+  thumbnails (star/circle/squircle), 4 inline song rows, "View all"+play footer
+- Artist of the Day = compact row card (circular thumb, mono label, chevron)
+- Broader/New Genre = half-width square tiles w/ cover + bottom scrim
+- Profile switching = radial hold-Home gesture (RadialSwitcherController singleton bridges
+  nav-item pointerInput → fullscreen overlay; nearest-node highlight, release commits);
+  chips removed; header = hue dot + profile name + hint
+- Emojis dead: profileColor(hue) dots everywhere (nodes = initials on hue circle)
+- η mark removed (About hero + player placeholder → MusicNote icon)
+- Server-only hardened: serverOnlyModeFlow pref gates MediaStore fetch entirely (folders fix),
+  set on backend login + DB REBUILD sync enqueued so already-scanned local files vanish

@@ -504,6 +504,14 @@ constructor(
                 preferences[PreferencesKeys.LAST_SYNC_TIMESTAMP] ?: 0L
             }
 
+    /** Server-only mode: backend connected — ignore phone-local MediaStore music. */
+    val serverOnlyModeFlow: Flow<Boolean> =
+        dataStore.data.map { it[booleanPreferencesKey("server_only_mode")] ?: false }
+
+    suspend fun setServerOnlyMode(enabled: Boolean) {
+        dataStore.edit { it[booleanPreferencesKey("server_only_mode")] = enabled }
+    }
+
     val directoryRulesVersionFlow: Flow<Int> =
             dataStore.data.map { preferences ->
                 preferences[PreferencesKeys.DIRECTORY_RULES_VERSION] ?: 0
