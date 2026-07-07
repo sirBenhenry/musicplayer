@@ -52,3 +52,37 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_songs_album_artist_id` ON `songs` (`album_artist_id`)")
     }
 }
+
+/**
+ * v2 -> v3: per-profile library filtering.
+ *
+ * - `profile_songs`: backend taste-profile assignment per song, keyed by
+ *   songs.content_uri_string ("navidrome://<id>"), synced from the backend.
+ * - `active_profile_filter`: single-row table holding the profile the library
+ *   is currently filtered to (NULL/absent = show everything). Library queries
+ *   reference it in a sub-select so Room's invalidation tracker refreshes all
+ *   library flows and paging sources when the active profile flips.
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `profile_songs` (
+                `content_uri` TEXT NOT NULL,
+                `profile_id` TEXT NOT NULL,
+                PRIMARY KEY(`content_uri`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_profile_songs_profile_id` ON `profile_songs` (`profile_id`)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `active_profile_filter` (
+                `id` INTEGER NOT NULL,
+                `profile_id` TEXT,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+    }
+}

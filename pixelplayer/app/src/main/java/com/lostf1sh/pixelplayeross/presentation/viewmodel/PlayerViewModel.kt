@@ -274,7 +274,8 @@ class PlayerViewModel @Inject constructor(
     val playlistSelectionStateHolder: PlaylistSelectionStateHolder,
     private val sessionToken: SessionToken,
     private val mediaControllerFactory: com.lostf1sh.pixelplayeross.data.media.MediaControllerFactory,
-    private val autoRadioManager: com.lostf1sh.pixelplayeross.data.backend.AutoRadioManager
+    private val autoRadioManager: com.lostf1sh.pixelplayeross.data.backend.AutoRadioManager,
+    private val profileLibraryFilter: com.lostf1sh.pixelplayeross.data.backend.ProfileLibraryFilter
 ) : ViewModel() {
 
     private val _playerUiState = MutableStateFlow(PlayerUiState())
@@ -847,6 +848,7 @@ class PlayerViewModel @Inject constructor(
         lyricsStateHolder.initialize(viewModelScope, lyricsLoadCallback, playbackStateHolder.stablePlayerState)
         playbackStateHolder.initialize(coroutineScope = viewModelScope)
         themeStateHolder.initialize(viewModelScope)
+        profileLibraryFilter.start(viewModelScope)
 
         // ── Auto-radio: extend the queue with vibe-matched songs when the
         // last track starts playing. Suppressed during daily-slot review

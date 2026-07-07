@@ -399,7 +399,17 @@ interface MusicDao {
         applyDirectoryFilter: Boolean
     ): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE album_id = :albumId ORDER BY disc_number ASC, track_number ASC")
+    @Query("""
+        SELECT * FROM songs WHERE album_id = :albumId
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
+        ORDER BY disc_number ASC, track_number ASC
+    """)
     fun getSongsByAlbumId(albumId: Long): Flow<List<SongEntity>>
 
     @Query("SELECT * FROM songs WHERE artist_id = :artistId ORDER BY title ASC")
@@ -482,6 +492,13 @@ interface MusicDao {
     @Query("""
         SELECT * FROM songs
         WHERE (:applyDirectoryFilter = 0 OR id < 0 OR parent_directory_path IN (:allowedParentDirs))
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         ORDER BY RANDOM()
         LIMIT :limit
     """)
@@ -506,6 +523,13 @@ interface MusicDao {
     @Query("""
         SELECT * FROM songs
         WHERE (:applyDirectoryFilter = 0 OR id < 0 OR parent_directory_path IN (:allowedParentDirs))
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
     """)
     fun getAllSongs(
         allowedParentDirs: List<String> = emptyList(),
@@ -557,6 +581,13 @@ interface MusicDao {
                 AND source_type != 0
             )
         )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         ORDER BY parent_directory_path ASC, title ASC
     """)
     fun getFolderSongs(
@@ -577,6 +608,13 @@ interface MusicDao {
             OR (
                 :filterMode = 2
                 AND source_type != 0
+            )
+        )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
             )
         )
         ORDER BY
@@ -614,6 +652,13 @@ interface MusicDao {
             OR (
                 :filterMode = 2
                 AND songs.source_type != 0
+            )
+        )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
             )
         )
         ORDER BY
@@ -654,6 +699,13 @@ interface MusicDao {
                 AND source_type != 0
             )
         )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         ORDER BY
             CASE WHEN :sortOrder = 'song_default_order' THEN track_number END ASC,
             CASE WHEN :sortOrder = 'song_title_az' THEN title END COLLATE NOCASE ASC,
@@ -691,6 +743,13 @@ interface MusicDao {
             OR (
                 :filterMode = 2
                 AND source_type != 0
+            )
+        )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
             )
         )
         ORDER BY
@@ -738,6 +797,13 @@ interface MusicDao {
                 AND songs.source_type != 0
             )
         )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         ORDER BY
             CASE WHEN :sortOrder = 'liked_title_az' THEN songs.title END COLLATE NOCASE ASC,
             CASE WHEN :sortOrder = 'liked_title_za' THEN songs.title END COLLATE NOCASE DESC,
@@ -775,6 +841,13 @@ interface MusicDao {
                 AND songs.source_type != 0
             )
         )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         ORDER BY songs.title COLLATE NOCASE ASC
     """)
     suspend fun getFavoriteSongsList(
@@ -797,6 +870,13 @@ interface MusicDao {
             OR (
                 :filterMode = 2
                 AND songs.source_type != 0
+            )
+        )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
             )
         )
         ORDER BY
@@ -837,6 +917,13 @@ interface MusicDao {
             OR (
                 :filterMode = 2
                 AND songs.source_type != 0
+            )
+        )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
             )
         )
     """)
@@ -1003,6 +1090,13 @@ interface MusicDao {
                 AND songs.source_type != 0
             )
         )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         GROUP BY
             albums.id,
             albums.title,
@@ -1045,6 +1139,13 @@ interface MusicDao {
             OR (
                 :filterMode = 2
                 AND songs.source_type != 0
+            )
+        )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
             )
         )
         GROUP BY
@@ -1102,6 +1203,13 @@ interface MusicDao {
             OR (
                 :filterMode = 2
                 AND songs.source_type != 0
+            )
+        )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
             )
         )
         GROUP BY
@@ -1284,6 +1392,13 @@ interface MusicDao {
         SELECT DISTINCT artists.* FROM artists
         INNER JOIN songs ON artists.id = songs.artist_id
         WHERE (:applyDirectoryFilter = 0 OR songs.id < 0 OR songs.parent_directory_path IN (:allowedParentDirs))
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         ORDER BY artists.name ASC
     """)
     fun getArtists(
@@ -1307,6 +1422,13 @@ interface MusicDao {
             OR (
                 :filterMode = 2
                 AND songs.source_type != 0
+            )
+        )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
             )
         )
         GROUP BY artists.id
@@ -1349,6 +1471,13 @@ interface MusicDao {
                 AND songs.source_type != 0
             )
         )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         GROUP BY artists.id
         ORDER BY
             CASE WHEN :sortOrder = 'artist_name_az' THEN artists.name END COLLATE NOCASE ASC,
@@ -1381,6 +1510,13 @@ interface MusicDao {
             OR (
                 :filterMode = 2
                 AND songs.source_type != 0
+            )
+        )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
             )
         )
         GROUP BY artists.id
@@ -1422,6 +1558,13 @@ interface MusicDao {
         SELECT DISTINCT artists.* FROM artists
         INNER JOIN songs ON artists.id = songs.artist_id
         WHERE (:applyDirectoryFilter = 0 OR songs.id < 0 OR songs.parent_directory_path IN (:allowedParentDirs))
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         ORDER BY artists.name ASC
     """)
     suspend fun getAllArtistsList(
@@ -1511,6 +1654,13 @@ interface MusicDao {
         SELECT DISTINCT genre FROM songs
         WHERE genre IS NOT NULL AND genre != ''
         AND (:applyDirectoryFilter = 0 OR id < 0 OR parent_directory_path IN (:allowedParentDirs))
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         ORDER BY genre ASC
     """)
     fun getUniqueGenres(
@@ -1721,6 +1871,13 @@ interface MusicDao {
         SELECT songs.* FROM songs
         INNER JOIN song_artist_cross_ref ON songs.id = song_artist_cross_ref.song_id
         WHERE song_artist_cross_ref.artist_id = :artistId
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         ORDER BY songs.title ASC
     """)
     fun getSongsForArtist(artistId: Long): Flow<List<SongEntity>>
@@ -1734,6 +1891,13 @@ interface MusicDao {
     @Query("""
         SELECT * FROM songs
         WHERE album_artist_id = :artistId
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         ORDER BY title ASC
     """)
     fun getSongsForArtistByAlbumArtist(artistId: Long): Flow<List<SongEntity>>
@@ -1745,6 +1909,13 @@ interface MusicDao {
         SELECT songs.* FROM songs
         INNER JOIN song_artist_cross_ref ON songs.id = song_artist_cross_ref.song_id
         WHERE song_artist_cross_ref.artist_id = :artistId
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
+            )
+        )
         ORDER BY songs.title ASC
     """)
     suspend fun getSongsForArtistList(artistId: Long): List<SongEntity>
@@ -1804,6 +1975,13 @@ interface MusicDao {
             OR (
                 :filterMode = 2
                 AND songs.source_type != 0
+            )
+        )
+        AND (
+            (SELECT profile_id FROM active_profile_filter WHERE id = 1) IS NULL
+            OR songs.content_uri_string IN (
+                SELECT content_uri FROM profile_songs
+                WHERE profile_id = (SELECT profile_id FROM active_profile_filter WHERE id = 1)
             )
         )
         GROUP BY artists.id
